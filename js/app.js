@@ -1258,7 +1258,7 @@ async function syncFromServer(options = {}) {
           ecoPoints: user.ecoPoints || 0,
           streak: user.streak || 0,
           badge: user.badge || "",
-          barangay: user.barangay || "Holy Spirit",
+          barangay: user.barangay || "",
           password: ""
         }
       ];
@@ -1488,16 +1488,16 @@ function buildSeedState() {
       },
       {
         id: "ADM001",
-        name: "Brgy. Holy Spirit Admin",
+        name: "Barangay Administrator",
         email: "admin@email.com",
         password: "password123",
         role: "admin",
         ecoPoints: 0,
         streak: 0,
         badge: "Admin",
-        barangay: "Holy Spirit",
+        barangay: "Lipa City",
         phoneNumber: "09179990000",
-        address: "Brgy. Holy Spirit, Lipa City",
+        address: "Lipa City, Philippines",
         gender: "male"
       }
     ],

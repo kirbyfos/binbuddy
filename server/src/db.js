@@ -135,17 +135,17 @@ function seedIfEmpty() {
   });
   insertUser.run({
     user_code: "ADM001",
-    full_name: "Brgy. Holy Spirit Admin",
+    full_name: "Barangay Administrator",
     email: "admin@email.com",
     password_hash: hash("password123"),
     phone_number: "09179990000",
-    address: "Brgy. Holy Spirit, Lipa City",
+    address: "Lipa City, Philippines",
     gender: "male",
     role: "admin",
     eco_points: 0,
     streak_days: 0,
     level: null,
-    barangay: "Holy Spirit"
+    barangay: "Lipa City"
   });
 
   const u1 = db.prepare("SELECT id FROM users WHERE user_code = ?").get("USR001");

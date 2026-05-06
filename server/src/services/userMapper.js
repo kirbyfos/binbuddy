@@ -10,7 +10,7 @@ export function toPublicUser(row) {
     ecoPoints: row.eco_points,
     streak: row.streak_days,
     badge: row.level || "Eco Starter",
-    barangay: row.barangay || "Holy Spirit",
+    barangay: row.barangay || "",
     gender: row.gender || ""
   };
 }

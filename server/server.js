@@ -262,7 +262,7 @@ const normalizeUserRow = (user = {}) => {
         ecoPoints: eco,
         streak: Number(user.streak ?? user.streak_days ?? 0),
         badge: user.level || 'Eco Starter',
-        barangay: user.barangay || 'Holy Spirit',
+        barangay: user.barangay || '',
         phoneNumber: user.phone_number || user.mobile || '',
         address: user.address || '',
         gender: user.gender || '',
@@ -376,8 +376,8 @@ async function ensureAdminAccount() {
         if (row && row.id) return;
         await pool.query(
             `INSERT INTO users (full_name, email, ${pwdCol}, role, eco_points, level, barangay, streak_days)
-             VALUES (?, ?, ?, 'admin', 0, 'Eco Starter', 'Holy Spirit', 0)`,
-            ['Brgy Admin', email, pwdVal]
+             VALUES (?, ?, ?, 'admin', 0, 'Eco Starter', 'Lipa City', 0)`,
+            ['Barangay Administrator', email, pwdVal]
         );
         console.log(`🛡️ Ensured admin account exists: ${email}`);
     } catch (e) {
