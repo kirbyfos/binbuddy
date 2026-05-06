@@ -461,6 +461,22 @@ a { text-decoration: none; color: inherit; }
   min-height: 1.2em;
   text-align: center;
 }
+.auth-api-hint {
+  grid-column: 1 / -1;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.76rem;
+  line-height: 1.48;
+  border: 1px solid rgba(232, 184, 102, 0.65);
+  background: #fff9ed;
+  color: var(--text);
+}
+.auth-api-hint[hidden] { display: none !important; margin: 0; padding: 0; border: none; }
+.auth-api-hint code {
+  font-size: 0.7rem;
+  word-break: break-all;
+}
 
 @media (max-width: 760px) {
   .auth-split {

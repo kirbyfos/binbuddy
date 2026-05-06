@@ -4,7 +4,14 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta name="theme-color" content="#006400"/>
-  <!-- Hosted: leave empty to use same-origin /api (or set your API root ending in /api). Dev: use http://localhost:3000/api -->
+  <!--
+    API base must end with /api. Hosted static-only sites (GitHub Pages, etc.) usually have NO backend —
+    deploy the Node app (Railway/Render…) and set EITHER:
+      <meta name="binbuddy-api-base" content="https://YOUR-API-HOST/api"/>
+    OR before app.js:
+      <script>window.BINBUDDY_API_BASE = "https://YOUR-API-HOST/api";</script>
+    Same-origin hosting: leave empty so the app uses YOURSITE/api through your reverse proxy.
+  -->
   <meta name="binbuddy-api-base" content=""/>
   <title>BinBuddy – Smart Waste Tracking</title>
   <link rel="stylesheet" href="css/style.css"/>
@@ -133,6 +140,7 @@
               <button type="button" class="btn btn-ghost auth-conn-btn" id="btn-conn-check">Check connection</button>
               <button type="button" class="btn btn-ghost auth-conn-btn" id="btn-conn-reset">Reset API link</button>
               <p class="auth-conn-status" id="auth-conn-status" aria-live="polite"></p>
+              <p class="auth-api-hint" id="auth-api-hint" hidden></p>
             </div>
           </div>
         </form>

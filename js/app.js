@@ -17,6 +17,16 @@ const API_BASE_STORAGE_KEY = "binbuddy-api-base";
  */
 let resolvedApiBase = null;
 let resolvingApiBasePromise = null;
+/** Did at least one /health probe succeed with JSON `{ ok/success }`? (false = static host or API down.) */
+let apiProbesHadHealthyHit = false;
+
+function isFileProtocol() {
+  try {
+    return typeof location !== "undefined" && String(location.protocol || "").toLowerCase() === "file:";
+  } catch (_e) {
+    return false;
+  }
+}
 
 function sleep(ms) {
   return new Promise(resolve => {
@@ -139,19 +149,25 @@ async function probeApiBase(base, timeoutMs = 900) {
 }
 
 async function getApiBase() {
+  if (isFileProtocol()) {
+    resolvedApiBase = "/api";
+    apiProbesHadHealthyHit = false;
+    return resolvedApiBase;
+  }
   if (resolvedApiBase) return resolvedApiBase;
   if (resolvingApiBasePromise) return resolvingApiBasePromise;
   resolvingApiBasePromise = (async () => {
     const candidates = candidateApiBases();
     if (!candidates.length) {
       resolvedApiBase = "/api";
+      apiProbesHadHealthyHit = false;
       return resolvedApiBase;
     }
     /**
-     * Parallel probes with a strict wall clock — hosted users must not stare at splash while loopback URLs time out.
+     * Parallel probes with a strict wall clock — static hosts fail fast so startup + login are not delayed.
      */
-    const API_BASE_PROBE_BUDGET_MS = 1800;
-    const perProbeMs = 850;
+    const API_BASE_PROBE_BUDGET_MS = 1100;
+    const perProbeMs = 450;
     const probeBatch = Promise.all(candidates.map(c => probeApiBase(c, perProbeMs).then(ok => ({ c, ok })))).then(
       rows => ({ kind: "rows", rows })
     );
@@ -160,10 +176,12 @@ async function getApiBase() {
       sleep(API_BASE_PROBE_BUDGET_MS).then(() => ({ kind: "timeout" }))
     ]);
     if (raced.kind === "timeout") {
+      apiProbesHadHealthyHit = false;
       resolvedApiBase = pickApiBaseFallback(candidates);
       return resolvedApiBase;
     }
     const hit = raced.rows.find(r => r.ok);
+    apiProbesHadHealthyHit = Boolean(hit);
     resolvedApiBase = hit ? hit.c : pickApiBaseFallback(candidates);
     return resolvedApiBase;
   })();
@@ -177,11 +195,13 @@ function setApiBaseOverride(baseUrl) {
       localStorage.removeItem(API_BASE_STORAGE_KEY);
       resolvedApiBase = null;
       resolvingApiBasePromise = null;
+      apiProbesHadHealthyHit = false;
       return true;
     }
     localStorage.setItem(API_BASE_STORAGE_KEY, b);
     resolvedApiBase = b;
     resolvingApiBasePromise = null;
+    apiProbesHadHealthyHit = false;
     return true;
   } catch (_e) {
     return false;
@@ -1004,6 +1024,13 @@ function clearToken() {
 }
 
 async function apiFetch(path, options = {}) {
+  if (isFileProtocol()) {
+    const err = new Error(
+      "This page was opened as a local file. Open your hosted BinBuddy URL or run npm start so the /api backend is available."
+    );
+    err.code = "FILE_PROTOCOL";
+    throw err;
+  }
   const timeoutMs = options.timeoutMs != null ? Number(options.timeoutMs) : 25000;
   const { timeoutMs: _omit, ...fetchOpts } = options;
   const headers = { "Content-Type": "application/json", ...(fetchOpts.headers || {}) };
@@ -1048,6 +1075,13 @@ async function apiFetch(path, options = {}) {
 
 /** POST multipart (e.g. QR photo). Do not set Content-Type — browser sets boundary. */
 async function apiFetchMultipart(path, formData, options = {}) {
+  if (isFileProtocol()) {
+    const err = new Error(
+      "This page was opened as a local file. Use your hosted URL or npm start so uploads can reach the API."
+    );
+    err.code = "FILE_PROTOCOL";
+    throw err;
+  }
   const timeoutMs = options.timeoutMs != null ? Number(options.timeoutMs) : 60000;
   const { timeoutMs: _omit, ...fetchOpts } = options;
   const headers = { ...(fetchOpts.headers || {}) };
@@ -1090,6 +1124,13 @@ async function syncFromServer(options = {}) {
   const token = getToken();
   if (!token) {
     apiMode = false;
+    return false;
+  }
+  if (isFileProtocol()) {
+    apiMode = false;
+    clearToken();
+    SessionManager.clear();
+    clearRuntimeUserContext();
     return false;
   }
   const tOpt = options.perRequestTimeoutMs != null ? { timeoutMs: options.perRequestTimeoutMs } : {};
@@ -1895,6 +1936,41 @@ function recoverSplashIfLoggedIn() {
   }
 }
 
+function tryShowAuthApiHint() {
+  const el = document.getElementById("auth-api-hint");
+  if (!el) return;
+  if (isFileProtocol()) {
+    el.hidden = false;
+    el.classList.add("auth-api-hint--warn");
+    el.textContent =
+      "This page was opened from disk (file://). Run npm start or open your HTTPS site URL so BinBuddy can reach its API.";
+    return;
+  }
+  if (apiProbesHadHealthyHit) {
+    el.hidden = true;
+    return;
+  }
+  const explicit = typeof window !== "undefined" && String(window.BINBUDDY_API_BASE || "").trim();
+  let stored = "";
+  try {
+    stored = typeof localStorage !== "undefined" ? String(localStorage.getItem(API_BASE_STORAGE_KEY) || "").trim() : "";
+  } catch (_e) {
+    stored = "";
+  }
+  const metaEl =
+    typeof document !== "undefined" ? document.querySelector('meta[name="binbuddy-api-base"]') : null;
+  const metaNorm = normalizeApiBase(metaEl?.getAttribute?.("content") || "");
+  const hasOverride = Boolean(explicit || stored || metaNorm);
+  el.hidden = false;
+  if (hasOverride) {
+    el.textContent =
+      "Saved API URL did not respond to /health JSON. Confirm the Node server is running on that host, HTTPS matches, CORS allows this site, and the URL ends with /api — then Reset API link + Check connection.";
+  } else {
+    el.innerHTML =
+      "<strong>No API on this origin.</strong> If you deployed only HTML (Netlify/GitHub Pages, etc.), the Node backend must live at its own URL. Set <code>window.BINBUDDY_API_BASE = \"https://your-server.com/api\"</code> in a script tag, or proxy <code>/api</code> to your API, then tap <strong>Check connection</strong>.";
+  }
+}
+
 function wireSplashTapToSkip() {
   const sp = document.getElementById("screen-splash");
   if (!sp || sp.dataset.bbSkipWired) return;
@@ -1922,6 +1998,17 @@ function wireSplashTapToSkip() {
 function initSplash(_restoredSession) {
   const splashScreen = document.getElementById("screen-splash");
   wireSplashTapToSkip();
+
+  if (isFileProtocol()) {
+    suppressSplashTransitions = true;
+    showLoginFormOnly();
+    if (pathRoutingEnabled()) {
+      window.history.replaceState({ screen: "auth", authenticated: false }, "", ROUTES.LOGIN);
+    }
+    const ae = document.getElementById("screen-auth");
+    if (ae) resetViewportScroll(ae);
+    return;
+  }
 
   if (!splashScreen && !AuthService.currentUser()) {
     showLoginFormOnly();
@@ -3554,18 +3641,27 @@ function initAuth() {
 
   const checkConnection = async () => {
     if (authSubmitInFlight) return;
+    if (isFileProtocol()) {
+      setConnStatus("Use http(s) or npm start — file:// cannot call the API.");
+      showToast("Open BinBuddy over the web URL, not as a downloaded file.");
+      tryShowAuthApiHint();
+      return;
+    }
     setConnStatus("Checking connection…");
     try {
-      const base = await getApiBase();
+      await getApiBase();
       const health = await apiFetch("/health", { method: "GET", timeoutMs: 12000 });
+      apiProbesHadHealthyHit = true;
+      tryShowAuthApiHint();
       const ok = Boolean(health?.dbConnected);
       setConnStatus(ok ? `Connected ✅ (DB ping ${health.dbPingMs ?? "?"}ms)` : `API ok, DB offline ❌ (${health.dbError || "unavailable"})`);
       showToast(ok ? "Connected to server + database." : "Server reachable but database is offline.");
       return;
     } catch (e) {
       const msg = e?.message || "Connection failed.";
-      setConnStatus(`Offline ❌ (${msg})`);
+      setConnStatus(`Offline ❌ (${msg.slice(0, 120)}${msg.length > 120 ? "…" : ""})`);
       showToast(msg);
+      tryShowAuthApiHint();
     }
   };
 
@@ -3573,6 +3669,7 @@ function initAuth() {
     setConnStatus("Resetting API link…");
     try {
       setApiBaseOverride("");
+      apiProbesHadHealthyHit = false;
       resolvedApiBase = null;
       resolvingApiBasePromise = null;
       clearToken();
@@ -4428,6 +4525,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (ok) refreshUI();
     });
   });
+
+  void getApiBase()
+    .catch(() => {})
+    .finally(() => {
+      try {
+        tryShowAuthApiHint();
+      } catch (_e) {
+        /* ignore */
+      }
+    });
 });
 
 window.AppState = AppState;
