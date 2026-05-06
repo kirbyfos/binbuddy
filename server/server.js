@@ -593,10 +593,7 @@ app.patch('/api/logs/:id/verify', authRequired, requireDb, requireRoles('collect
         );
 
         if (approve && pts > 0) {
-            await conn.query(`UPDATE users SET eco_points = eco_points + ?, streak_days = streak_days + 1 WHERE ${usersIdColumn()} = ?`, [
-                pts,
-                logRow.user_id
-            ]);
+            await conn.query(`UPDATE users SET eco_points = eco_points + ? WHERE ${usersIdColumn()} = ?`, [pts, logRow.user_id]);
         }
 
         await conn.commit();

@@ -1017,8 +1017,6 @@ function updateHomeStats() {
   if (stats[2]) stats[2].textContent = ecoPts;
   if (stats[3]) stats[3].textContent = logs.length;
 
-  const streakEl = document.querySelector("#screen-home .welcome-banner div[style*='text-align:right'] div[style*='font-size:1.8rem']");
-  if (streakEl) streakEl.textContent = user.streak ?? 0;
 }
 
 function buildSeedState() {
@@ -1321,7 +1319,6 @@ const VerificationService = {
     const user = AppState.users.find(u => sameUserId(u.id, log.userId));
     if (user) {
       user.ecoPoints += log.ecoPointsAwarded;
-      user.streak += 1;
       user.badge = BADGE_LEVELS.reduce((acc, level) => (user.ecoPoints >= level.min ? level.label : acc), "Eco Starter");
       AppState.notifications.unshift({
         text: `Log ${log.id} completed. +${log.ecoPointsAwarded} EcoPoints awarded.`,
@@ -1962,6 +1959,18 @@ function assignEcoPointsCompetitionRank(sortedHouseholds) {
   });
 }
 
+function computeHouseholdEcoPointsRank(user) {
+  if (!user || normalizeRole(user.role) !== "household") return null;
+  const sorted = AppState.users
+    .filter(u => normalizeRole(u.role) === "household")
+    .slice()
+    .sort((a, b) => (Number(b.ecoPoints) || 0) - (Number(a.ecoPoints) || 0));
+  const ranked = assignEcoPointsCompetitionRank(sorted);
+  const mine = ranked.find(r => sameUserId(r.id, user.id));
+  if (!mine) return null;
+  return { rank: Number(mine.ecoRank) || 0, total: ranked.length, points: Number(mine.ecoPoints) || 0 };
+}
+
 function renderLeaderboard() {
   const sorted = AppState.users
     .filter(u => normalizeRole(u.role) === "household")
@@ -2003,20 +2012,17 @@ function renderProfile() {
   const profileAddress = document.getElementById("profile-brgy");
   const profileAvatar = document.getElementById("profile-avatar");
   const pts = document.getElementById("profile-pts");
-  const streak = document.getElementById("profile-streak");
   const totalLogs = document.getElementById("profile-total-logs");
   const badge = document.getElementById("eco-badge-pts");
   const logs = user && normalizeRole(user.role) === "household" ? wasteLogsForUser(user) : null;
   const eco = user ? Number(user.ecoPoints) || 0 : 0;
-  const streakVal = user ? Number(user.streak) || 0 : 0;
   const logCount = logs ? logs.length : 0;
 
   if (profileAvatar) profileAvatar.textContent = profileAvatarEmoji(user);
   if (name) name.textContent = user ? (user.name || "User") : "User";
   if (profileAddress) profileAddress.textContent = user ? getUserBarangayLabel(user) : NO_ADDRESS_LABEL;
-  // Match dashboard #screen-home stats: ecoPoints, streak, and user's log count only.
+  // Match dashboard #screen-home stats: EcoPoints and user's log count only.
   if (pts) pts.textContent = String(eco);
-  if (streak) streak.textContent = String(streakVal);
   if (totalLogs) totalLogs.textContent = logs !== null ? String(logCount) : "0";
   if (badge) badge.textContent = `⭐ ${eco} pts`;
   document.querySelectorAll("#screen-home .ecopoints-value, #screen-rewards .ecopoints-value").forEach(el => {
@@ -2048,13 +2054,12 @@ function renderHomeDisposalRank() {
     el.textContent = "";
     return;
   }
-  const r = computeHouseholdDisposalRank(user);
-  const verified = Number(r?.verifiedCount || 0);
-  if (!r || r.rank == null || verified <= 0) {
-    el.textContent = "Disposal rank Unranked · 0 verified disposals";
+  const r = computeHouseholdEcoPointsRank(user);
+  if (!r || r.rank == null || Number(r.total || 0) <= 0) {
+    el.textContent = "Leaderboard rank Unranked";
     return;
   }
-  el.textContent = `Rank #${r.rank} of ${r.total} · ${r.verifiedCount} verified disposal${r.verifiedCount === 1 ? "" : "s"}`;
+  el.textContent = `Leaderboard rank #${r.rank} of ${r.total} · ${r.points} pts`;
 }
 
 function renderRewardsBarangay() {
@@ -2064,8 +2069,8 @@ function renderRewardsBarangay() {
   const pts = user && normalizeRole(user.role) === "household" ? Number(user.ecoPoints) || 0 : 0;
   const peso = Math.max(0, Math.round(pts / 10));
   const brgy = user ? getUserBarangayLabel(user) : NO_ADDRESS_LABEL;
-  const r = user && normalizeRole(user.role) === "household" ? computeHouseholdDisposalRank(user) : null;
-  const rankBit = r && r.rank != null && Number(r.verifiedCount || 0) > 0 ? `Rank #${r.rank} of ${r.total}` : "Unranked";
+  const r = user && normalizeRole(user.role) === "household" ? computeHouseholdEcoPointsRank(user) : null;
+  const rankBit = r && r.rank != null ? `Rank #${r.rank} of ${r.total}` : "Unranked";
   el.textContent = `≈ ₱${peso} value · ${brgy} · ${rankBit} 🏆`;
 }
 
