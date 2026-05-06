@@ -30,35 +30,81 @@ function normalizeApiBase(raw) {
   return s.endsWith("/api") ? s : `${s}/api`;
 }
 
+/** True for URLs pointing at loopback hosts (stored meta/localStorage commonly ship these). */
+function isLoopbackApiUrl(candidate) {
+  return /(^|\/)localhost\b|(^|\/)127\.0\.0\.1\b|^https?:\/\/localhost\b|^https?:\/\/127\.0\.0\.1\b/i.test(
+    String(candidate || "")
+  );
+}
+
+/**
+ * On production hosts, never prioritize localhost-ish bases (dev leftovers in localStorage).
+ */
+function finalizeApiCandidateOrder(candidates) {
+  const host = String(window.location?.hostname || "").trim();
+  const isLocalPage = host === "localhost" || host === "127.0.0.1";
+  if (isLocalPage) return candidates;
+  const front = [];
+  const tail = [];
+  for (const c of candidates) {
+    if (isLoopbackApiUrl(c)) tail.push(c);
+    else front.push(c);
+  }
+  return front.length ? [...front, ...tail] : [...candidates];
+}
+
+/** When health checks all fail / time out — prefer same-origin /api over a random dev URL. */
+function pickApiBaseFallback(candidates) {
+  const cs = candidates && candidates.length ? candidates : ["/api"];
+  const host = String(window.location?.hostname || "").trim();
+  const isLocalPage = host === "localhost" || host === "127.0.0.1";
+  const origin = String(window.location?.origin || "").trim();
+  const originApi = origin && /^https?:/i.test(origin) ? `${origin}/api` : "";
+  if (!isLocalPage) {
+    if (originApi && cs.includes(originApi)) return originApi;
+    const hit = cs.find(c => /^https?:/i.test(c) && !isLoopbackApiUrl(c));
+    if (hit) return hit;
+    if (originApi) return originApi;
+    const sameRel = cs.find(c => String(c).startsWith("/"));
+    if (sameRel) return sameRel;
+  }
+  return cs[0] || "/api";
+}
+
 function candidateApiBases() {
   const list = [];
   try {
     const w = typeof window !== "undefined" ? window : null;
-    if (!w) return ["/api"];
+    if (!w) return finalizeApiCandidateOrder(["/api"]);
     const explicit = normalizeApiBase(w.BINBUDDY_API_BASE);
     if (explicit) list.push(explicit);
+    const host = String(w.location?.hostname || "").trim();
+    const isLocalHost = host === "localhost" || host === "127.0.0.1";
     const stored = normalizeApiBase(w.localStorage?.getItem(API_BASE_STORAGE_KEY));
-    if (stored) list.push(stored);
+    if (stored) {
+      if (!isLocalHost && isLoopbackApiUrl(stored)) {
+        /* Saved from local dev — wrong for Netlify/GitHub Pages; skip */
+      } else {
+        list.push(stored);
+      }
+    }
 
     const meta = w.document?.querySelector?.('meta[name="binbuddy-api-base"]')?.getAttribute?.("content");
     const metaNorm = normalizeApiBase(meta);
-    const host = String(w.location?.hostname || "").trim();
     const proto = String(w.location?.protocol || "https:").trim();
-    const isLocalHost = host === "localhost" || host === "127.0.0.1";
     const origin = String(w.location?.origin || "").trim();
     const originApi = origin && /^https?:/i.test(origin) ? `${origin}/api` : "";
 
     /**
-     * index.html often ships with meta pointing at http://localhost:3000/api for dev.
-     * On a real host, probing that URL first blocks startup ~seconds per attempt (was sequential + 6.5s timeout).
-     * Local dev: meta before same-origin. Deployed: same-origin /api before localhost meta.
+     * Local dev: probe meta/dev API early. Hosted: prefer same-origin /api first; loopback URLs go last via finalize().
      */
     if (isLocalHost) {
       if (metaNorm) list.push(metaNorm);
       if (originApi) list.push(originApi);
     } else {
       if (originApi) list.push(originApi);
-      if (metaNorm) list.push(metaNorm);
+      if (metaNorm && !isLoopbackApiUrl(metaNorm)) list.push(metaNorm);
+      else if (metaNorm) list.push(metaNorm);
     }
 
     if (host && !host.startsWith("api.")) {
@@ -70,11 +116,12 @@ function candidateApiBases() {
   list.push("/api");
 
   const seen = new Set();
-  return list.filter(x => (x && !seen.has(x) ? (seen.add(x), true) : false));
+  const deduped = list.filter(x => (x && !seen.has(x) ? (seen.add(x), true) : false));
+  return finalizeApiCandidateOrder(deduped);
 }
 
 /** Health check for one API base. Keep timeout short — many candidates may be tried in parallel. */
-async function probeApiBase(base, timeoutMs = 2800) {
+async function probeApiBase(base, timeoutMs = 900) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -101,11 +148,10 @@ async function getApiBase() {
       return resolvedApiBase;
     }
     /**
-     * Parallel probes, but never block startup forever: some browsers leave fetch pending despite AbortSignal.
-     * After API_BASE_PROBE_BUDGET_MS we pick the first candidate and let real requests fail fast with normal apiFetch timeouts.
+     * Parallel probes with a strict wall clock — hosted users must not stare at splash while loopback URLs time out.
      */
-    const API_BASE_PROBE_BUDGET_MS = 5200;
-    const perProbeMs = 2200;
+    const API_BASE_PROBE_BUDGET_MS = 1800;
+    const perProbeMs = 850;
     const probeBatch = Promise.all(candidates.map(c => probeApiBase(c, perProbeMs).then(ok => ({ c, ok })))).then(
       rows => ({ kind: "rows", rows })
     );
@@ -114,11 +160,11 @@ async function getApiBase() {
       sleep(API_BASE_PROBE_BUDGET_MS).then(() => ({ kind: "timeout" }))
     ]);
     if (raced.kind === "timeout") {
-      resolvedApiBase = candidates[0] || "/api";
+      resolvedApiBase = pickApiBaseFallback(candidates);
       return resolvedApiBase;
     }
     const hit = raced.rows.find(r => r.ok);
-    resolvedApiBase = hit ? hit.c : candidates[0] || "/api";
+    resolvedApiBase = hit ? hit.c : pickApiBaseFallback(candidates);
     return resolvedApiBase;
   })();
   return resolvingApiBasePromise;
@@ -1204,9 +1250,9 @@ async function syncFromServer(options = {}) {
   }
 }
 
-/** First paint after reload: shorter per-request timeouts + UI not blocked on this promise. */
-const BOOTSTRAP_SYNC_PER_REQUEST_MS = 9000;
-const BOOTSTRAP_SYNC_UI_WAIT_MS = 22000;
+/** First paint after reload: bounded per-request timeouts; overall UI wait must stay short for hosted static sites. */
+const BOOTSTRAP_SYNC_PER_REQUEST_MS = 7000;
+const BOOTSTRAP_SYNC_UI_WAIT_MS = 16000;
 
 function uiApplySuccessfulServerHydration() {
   suppressSplashTransitions = true;
@@ -1711,6 +1757,48 @@ function resetViewportScroll(activeScreenEl) {
   requestAnimationFrame(() => requestAnimationFrame(flush));
 }
 
+/** If splash never hands off (timer starved, bugs), user must still reach the sign-in UI. */
+function forceShowLoginShell() {
+  try {
+    const mount = document.getElementById("mount-login-phase");
+    const login = document.getElementById("screen-auth");
+    if (!mount || !mount.parentNode || !login) return;
+    if (AuthService.currentUser()) return;
+    suppressSplashTransitions = true;
+    mount.querySelectorAll(".screen").forEach(el => el.classList.remove("active"));
+    login.classList.add("active");
+    setViewportAuthLock(true);
+    resetViewportScroll(login);
+    if (pathRoutingEnabled()) {
+      try {
+        window.history.replaceState({ screen: "auth", authenticated: false }, "", ROUTES.LOGIN);
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+  } catch (e) {
+    console.warn("[forceShowLoginShell]", e);
+  }
+}
+
+/** Multiple deadlines — hosting/CDN must never leave only the animated splash visible. */
+function scheduleSplashAuthFailsafes() {
+  [320, 900, 2200].forEach(ms => {
+    window.setTimeout(() => {
+      try {
+        if (suppressSplashTransitions) return;
+        if (AuthService.currentUser()) return;
+        const splash = document.getElementById("screen-splash");
+        if (splash && splash.classList.contains("active")) {
+          forceShowLoginShell();
+        }
+      } catch (_e) {
+        /* ignore */
+      }
+    }, ms);
+  });
+}
+
 function initSplash(_restoredSession) {
   const splashScreen = document.getElementById("screen-splash");
   if (!splashScreen && !AuthService.currentUser()) {
@@ -1728,7 +1816,9 @@ function initSplash(_restoredSession) {
     historySplashOnLoginRoute();
   }
 
-  setTimeout(() => {
+  scheduleSplashAuthFailsafes();
+
+  window.setTimeout(() => {
     if (AuthService.currentUser()) return;
 
     showLoginFormOnly();
@@ -1737,7 +1827,7 @@ function initSplash(_restoredSession) {
     }
     const ae = document.getElementById("screen-auth");
     if (ae) resetViewportScroll(ae);
-  }, 1200);
+  }, 550);
 }
 
 function syncTrackScreenSubView(screen, trackSubView) {
@@ -4384,7 +4474,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   initRecyclableChecker();
   updateQtyUI();
   resetLogInputs();
-  refreshUI();
+  safeInit("refreshUI", () => {
+    try {
+      refreshUI();
+    } catch (err) {
+      console.error("[init:refreshUI]", err);
+    }
+  });
 
   if (getToken()) {
     void runInitialSessionHydrationFromToken().catch(err => console.error("[init:bootstrapHydration]", err));
