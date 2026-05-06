@@ -516,6 +516,109 @@ const BADGE_LEVELS = [
   { min: 700, label: "Eco Hero" }
 ];
 
+/** Copy for the floating ❓ tutorial (shown after login, per role). */
+const HELP_TOUR_STEPS_HOUSEHOLD = [
+  {
+    icon: "🏠",
+    title: "Welcome, household",
+    desc:
+      "Log each recyclable pickup (PET or HDPE) with weight and optional photo. When a collector verifies it, you earn EcoPoints you can later spend on rewards."
+  },
+  {
+    icon: "📊",
+    title: "Dashboard",
+    desc:
+      "Your home screen shows rank, address, EcoPoints, and recent activity. Open the menu (☰ or top bar) to switch screens on smaller layouts."
+  },
+  {
+    icon: "♻️",
+    title: "Log Disposal",
+    desc:
+      "Go to Log Disposal: choose PET or HDPE, set kilograms, add a photo if you like, pick the date, then submit. New entries stay Pending until verified."
+  },
+  {
+    icon: "📚",
+    title: "Segregation guide",
+    desc:
+      "From Dashboard, tap the Seg. Guide card to see what counts as PET vs HDPE before you submit so your log matches your actual bags or bottles."
+  },
+  {
+    icon: "🎁",
+    title: "Rewards & Activity",
+    desc:
+      "Rewards lists what you can redeem with EcoPoints. Activity Log keeps your app notifications handy in one place."
+  },
+  {
+    icon: "👤",
+    title: "Profile",
+    desc:
+      "Profile shows your stats and totals. Keeping your barangay and contact details accurate helps admins and collectors support your area."
+  }
+];
+
+const HELP_TOUR_STEPS_COLLECTOR = [
+  {
+    icon: "🚛",
+    title: "Welcome, collector",
+    desc:
+      "You review pickups households submitted online. Verified logs award them EcoPoints; your job is to confirm the waste matches the log (using their photo when they attached one)."
+  },
+  {
+    icon: "📥",
+    title: "Unverified vs Verified",
+    desc:
+      "Use Unverified in the menu for the pickup queue, and Verified to see completed verifications this year. The same tabs appear on your Pickup queue screen."
+  },
+  {
+    icon: "✅",
+    title: "How to verify",
+    desc:
+      "Open each card, check household details and optional photo proof, then tap Verify. Cards leave Unverified after you verify—they move to Verified and History."
+  },
+  {
+    icon: "📋",
+    title: "History & profile",
+    desc:
+      "History is read-only verified data for the whole year; Profile summarizes pickups tied to your account."
+  },
+  {
+    icon: "⏳",
+    title: "Stats",
+    desc:
+      "Verified OK counts completed logs this year; Pending counts logs still waiting in the household queue—you can clear them from the Unverified tab."
+  }
+];
+
+const HELP_TOUR_STEPS_ADMIN = [
+  {
+    icon: "⚙️",
+    title: "Welcome, admin",
+    desc:
+      "You oversee platform data at a glance: household activity, totals, and recent waste submissions."
+  },
+  {
+    icon: "📈",
+    title: "Analytics",
+    desc:
+      "The admin dashboard summarizes disposals, EcoPoints, and trends. Use it to monitor program health and barangay participation."
+  },
+  {
+    icon: "📄",
+    title: "Waste logs",
+    desc:
+      "Review the combined log list for status and verification context. Collectors and households act in their own apps; you get the full picture here."
+  },
+  {
+    icon: "👤",
+    title: "Profile & security",
+    desc:
+      "Use Profile for your admin account. Log out from the menu when you finish on a shared device."
+  }
+];
+
+let helpTourIndex = 0;
+let helpTourStepsActive = [];
+
 const AppState = {
   currentScreen: "auth",
   role: "household",
@@ -654,16 +757,6 @@ function isLogInCalendarYear(log, year) {
   return logCalendarYear(log) === year;
 }
 
-function isLogSameLocalCalendarDay(log, refDate = new Date()) {
-  const d = logReferenceInstant(log);
-  if (Number.isNaN(d.getTime())) return false;
-  return (
-    d.getFullYear() === refDate.getFullYear() &&
-    d.getMonth() === refDate.getMonth() &&
-    d.getDate() === refDate.getDate()
-  );
-}
-
 function collectorYearlyLogs(logs, year = new Date().getFullYear()) {
   return logs.filter(l => isLogInCalendarYear(l, year));
 }
@@ -671,12 +764,9 @@ function collectorYearlyLogs(logs, year = new Date().getFullYear()) {
 function computeCollectorDashboardStats(logs) {
   const year = new Date().getFullYear();
   const y = collectorYearlyLogs(logs, year);
-  const today = new Date();
-  const pickupsToday = y.filter(l => isLogSameLocalCalendarDay(l, today)).length;
   const verifiedOk = y.filter(l => l.status === "Completed").length;
-  const notSegregated = y.filter(l => l.status === "Rejected").length;
   const pending = y.filter(l => l.status === "Pending").length;
-  return { year, pickupsToday, verifiedOk, notSegregated, pending };
+  return { year, verifiedOk, pending };
 }
 
 function sortedVerifiedLogsYear(logs, year = new Date().getFullYear()) {
@@ -2199,25 +2289,18 @@ function renderCollectorView() {
   const stats = computeCollectorDashboardStats(AppState.logs);
   const yLogs = collectorYearlyLogs(AppState.logs, year);
   const active = yLogs
-    .filter(l => l.status === "Pending" || l.status === "Rejected")
+    .filter(l => l.status === "Pending")
     .slice()
-    .sort((a, b) => {
-      if (a.status === "Pending" && b.status !== "Pending") return -1;
-      if (b.status === "Pending" && a.status !== "Pending") return 1;
-      return logReferenceInstant(b).getTime() - logReferenceInstant(a).getTime();
-    });
-  const statusLabel = log =>
-    log.status === "Rejected" ? "Not segregated" : log.status === "Pending" ? "Pending" : log.status;
+    .sort((a, b) => logReferenceInstant(b).getTime() - logReferenceInstant(a).getTime());
   list.innerHTML = active.length
     ? active
         .map(
           log => `
     <div class="card" style="margin-bottom:10px">
       <strong>${log.userName}</strong> • ${log.type} • ${log.weight} kg<br/>
-      <small>Status: <strong>${statusLabel(log)}</strong> · ${logCalendarYear(log)}</small>
+      <small>Pending · ${logCalendarYear(log)}</small>
       ${collectorProofMarkup(log)}
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn btn-outline" onclick="handleCollectorDecision('${log.id}',false)">Not Verified</button>
         <button class="btn btn-primary" onclick="handleCollectorDecision('${log.id}',true)">Verify</button>
       </div>
     </div>
@@ -2232,10 +2315,8 @@ function renderCollectorView() {
     : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No verified logs for ${year} yet.</p>`;
 
   const statValues = document.querySelectorAll("#screen-collector .stat-value");
-  if (statValues[0]) statValues[0].textContent = stats.pickupsToday;
-  if (statValues[1]) statValues[1].textContent = stats.verifiedOk;
-  if (statValues[2]) statValues[2].textContent = stats.notSegregated;
-  if (statValues[3]) statValues[3].textContent = stats.pending;
+  if (statValues[0]) statValues[0].textContent = stats.verifiedOk;
+  if (statValues[1]) statValues[1].textContent = stats.pending;
 }
 
 async function handleCollectorDecision(logId, isVerified) {
@@ -3887,6 +3968,90 @@ function initAdminActions() {
   });
 }
 
+function resolveHelpTourSteps() {
+  const user = AuthService.currentUser();
+  const role = user ? normalizeRole(user.role) : "household";
+  if (role === "collector") return HELP_TOUR_STEPS_COLLECTOR;
+  if (role === "admin") return HELP_TOUR_STEPS_ADMIN;
+  return HELP_TOUR_STEPS_HOUSEHOLD;
+}
+
+function renderHelpTourStep() {
+  const steps = helpTourStepsActive;
+  const step = steps[helpTourIndex];
+  const titleEl = document.getElementById("tour-title");
+  const descEl = document.getElementById("tour-desc");
+  const stepEl = document.getElementById("tour-step");
+  const iconEl = document.getElementById("tour-icon");
+  const prevEl = document.getElementById("tour-prev");
+  const nextEl = document.getElementById("tour-next");
+  if (!step || !titleEl || !descEl || !stepEl || !prevEl || !nextEl) return;
+  if (iconEl) iconEl.textContent = step.icon || "♻️";
+  titleEl.textContent = step.title;
+  descEl.textContent = step.desc;
+  stepEl.textContent = `${helpTourIndex + 1} / ${steps.length}`;
+  prevEl.disabled = helpTourIndex <= 0;
+  const last = helpTourIndex >= steps.length - 1;
+  nextEl.textContent = last ? "Done" : "Next →";
+}
+
+function openHelpTourModal() {
+  if (!AuthService.currentUser()) {
+    showToast("Log in to open the tutorial.");
+    return;
+  }
+  helpTourStepsActive = resolveHelpTourSteps();
+  helpTourIndex = 0;
+  if (!helpTourStepsActive.length) {
+    showToast("No tutorial available.");
+    return;
+  }
+  renderHelpTourStep();
+  document.getElementById("help-modal")?.classList.add("active");
+}
+
+function closeHelpTourModal() {
+  closeModal("help-modal");
+}
+
+function advanceHelpTour() {
+  if (helpTourIndex >= helpTourStepsActive.length - 1) {
+    closeHelpTourModal();
+    return;
+  }
+  helpTourIndex += 1;
+  renderHelpTourStep();
+}
+
+function retreatHelpTour() {
+  if (helpTourIndex <= 0) return;
+  helpTourIndex -= 1;
+  renderHelpTourStep();
+}
+
+function initHelpTour() {
+  const helpBtn = document.getElementById("help-btn");
+  const prev = document.getElementById("tour-prev");
+  const next = document.getElementById("tour-next");
+  const closeBtn = document.getElementById("tour-close");
+  const overlay = document.getElementById("help-modal");
+
+  helpBtn?.addEventListener("click", openHelpTourModal);
+  prev?.addEventListener("click", retreatHelpTour);
+  next?.addEventListener("click", advanceHelpTour);
+  closeBtn?.addEventListener("click", closeHelpTourModal);
+
+  overlay?.addEventListener("click", e => {
+    if (e.target === overlay) closeHelpTourModal();
+  });
+
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    if (!document.getElementById("help-modal")?.classList.contains("active")) return;
+    closeHelpTourModal();
+  });
+}
+
 function initNavigation() {
   const burger = document.getElementById("top-nav-burger");
   const header = document.getElementById("top-nav");
@@ -4096,6 +4261,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initSplash(restored);
   setupWasteTypeSelectors();
   initNavigation();
+  safeInit("helpTour", () => initHelpTour());
   initDashboardBackButtons();
   initAuth();
   initAdminActions();

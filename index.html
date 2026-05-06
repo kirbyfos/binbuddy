@@ -501,29 +501,19 @@
   <section id="screen-collector" class="screen">
     <div class="page-header">
       <div class="page-header-sub">🚛 Waste Collector</div>
-      <h1>Today's Pickups</h1>
+      <h1>Pickup queue</h1>
     </div>
     <div class="page-content">
       <!-- Collector Stats -->
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-icon">📋</div>
-          <div class="stat-value">5</div>
-          <div class="stat-label">Pickups Today</div>
-        </div>
-        <div class="stat-card">
           <div class="stat-icon">✅</div>
-          <div class="stat-value">2</div>
+          <div class="stat-value">0</div>
           <div class="stat-label">Verified OK</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon">❌</div>
-          <div class="stat-value">1</div>
-          <div class="stat-label">Not Segregated</div>
-        </div>
-        <div class="stat-card">
           <div class="stat-icon">⏳</div>
-          <div class="stat-value">2</div>
+          <div class="stat-value">0</div>
           <div class="stat-label">Pending</div>
         </div>
       </div>
@@ -534,21 +524,8 @@
       </div>
 
       <div id="collector-panel-unverified">
-        <!-- Search User -->
-        <div class="guide-search mb-12">
-          <span>🔍</span>
-          <input type="text" placeholder="Search household by name or address..."/>
-        </div>
-
-        <div class="section-title">🏠 Pending pickup — verify or flag</div>
+        <div class="section-title">🏠 Pending pickup — verify</div>
         <div id="pickup-list"></div>
-
-        <!-- Photo Proof -->
-        <div style="border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;margin:14px 0;cursor:pointer;background:#fafffe"
-             onclick="showToast('📷 Camera would open for photo proof')">
-          <div style="font-size:2rem">📷</div>
-          <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px">Upload photo proof of pickup</div>
-        </div>
       </div>
 
       <div id="collector-panel-verified" hidden>
@@ -887,7 +864,7 @@
   <!-- ====================================================
        FLOATING HELP BUTTON
   ==================================================== -->
-  <button class="help-btn" id="help-btn" title="Help / Demo Tour">❓</button>
+  <button type="button" class="help-btn" id="help-btn" title="Short tutorial" aria-label="Open short tutorial — how to use BinBuddy">❓</button>
 
   <!-- ====================================================
        MODALS
@@ -950,17 +927,18 @@
   </div>
 
   <!-- Help / Tour Modal -->
-  <div class="modal-overlay" id="help-modal">
-    <div class="modal-sheet" style="text-align:center">
+  <div class="modal-overlay" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-desc">
+    <div class="modal-sheet help-tour-sheet">
       <div class="modal-handle"></div>
-      <div style="font-size:2.5rem;margin-bottom:8px">🌿</div>
-      <div class="modal-title" id="tour-title">Welcome to BinBuddy!</div>
-      <p style="color:var(--text-muted);font-size:0.88rem;margin-bottom:20px" id="tour-desc">Your smart waste tracking and rewards platform for a cleaner Lipa City.</p>
-      <div style="color:var(--text-muted);font-size:0.78rem;margin-bottom:14px" id="tour-step">1 / 6</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-outline" id="tour-prev" disabled>← Prev</button>
-        <button class="btn btn-primary" id="tour-next">Next →</button>
+      <div class="help-tour-icon" id="tour-icon" aria-hidden="true">🏠</div>
+      <div class="modal-title" id="tour-title">Welcome to BinBuddy</div>
+      <p id="tour-desc" class="help-tour-body">Tap Next for a quick tour of this app.</p>
+      <div id="tour-step" class="help-tour-step">1 / 5</div>
+      <div class="help-tour-actions">
+        <button type="button" class="btn btn-outline" id="tour-prev" disabled>← Prev</button>
+        <button type="button" class="btn btn-primary" id="tour-next">Next →</button>
       </div>
+      <button type="button" class="btn btn-ghost help-tour-close" id="tour-close">Close</button>
     </div>
   </div>
 

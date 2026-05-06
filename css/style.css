@@ -1722,12 +1722,46 @@ a { text-decoration: none; color: inherit; }
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 18px rgba(0,100,0,0.3);
-  z-index: 900;
+  z-index: 2400;
   cursor: pointer;
   border: none;
   transition: var(--transition);
 }
 .help-btn:hover { transform: scale(1.1); }
+
+/* Help / demo tour modal */
+.help-tour-sheet {
+  text-align: center;
+}
+.help-tour-icon {
+  font-size: 2.5rem;
+  margin-bottom: 8px;
+  line-height: 1;
+}
+.help-tour-body {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 14px;
+  text-align: left;
+}
+.help-tour-step {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-bottom: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.help-tour-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.help-tour-close {
+  width: 100%;
+  margin-top: 4px;
+}
 
 /* ---- Modal ---- */
 .modal-overlay {
