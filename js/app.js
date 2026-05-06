@@ -263,6 +263,12 @@ function computeHouseholdDisposalRank(user) {
 
 const NO_RECENT_ACTIVITY_TEXT = "No recent activity yet.";
 
+/** Normalize identity checks (API/DB often mix numeric vs string IDs). */
+function sameUserId(a, b) {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
 /** Waste logs tied to the authenticated user (numeric id or user_code must match). */
 function wasteLogsForUser(user) {
   if (!user) return [];
@@ -793,52 +799,39 @@ async function syncFromServer() {
     if (normalizeRole(user.role) === "household") {
       const lb = await apiFetch("/leaderboard");
       const rows = lb.leaderboard || [];
-      const mapped = rows.map(u => ({
-        id: u.id,
-        name: u.name,
-        email: u.id === user.id ? user.email || "" : "",
-        phoneNumber: u.id === user.id ? user.phoneNumber || "" : "",
-        address: u.id === user.id ? user.address || "" : "",
-        gender: u.id === user.id ? user.gender || "" : "",
+      const myIdStr = String(user.id);
+      /** Single source of truth for the signed-in account (never leaderboard merge). */
+      const meRow = {
+        id: user.id,
+        name: user.name || user.email || "User",
+        email: user.email || "",
+        phoneNumber: user.phoneNumber || "",
+        address: user.address || "",
+        gender: user.gender || "",
         role: "household",
-        ecoPoints: u.ecoPoints,
-        streak: u.id === user.id ? user.streak : 0,
-        badge: u.id === user.id ? user.badge : "Eco Starter",
+        ecoPoints: Number(user.ecoPoints) || 0,
+        streak: Number(user.streak) || 0,
+        badge: user.badge || "Eco Starter",
         barangay: user.barangay || "Holy Spirit",
         password: ""
-      }));
-      if (!mapped.some(u => u.id === user.id)) {
-        mapped.unshift({
-          id: user.id,
-          name: user.name,
-          email: user.email || "",
-          phoneNumber: user.phoneNumber || "",
-          address: user.address || "",
-          gender: user.gender || "",
+      };
+      const others = rows
+        .filter(r => String(r.id) !== myIdStr)
+        .map(r => ({
+          id: r.id,
+          name: r.name || "User",
+          email: "",
+          phoneNumber: "",
+          address: "",
+          gender: "",
           role: "household",
-          ecoPoints: user.ecoPoints,
-          streak: user.streak,
-          badge: user.badge,
-          barangay: user.barangay || "Holy Spirit",
+          ecoPoints: Number(r.ecoPoints) || 0,
+          streak: 0,
+          badge: "Eco Starter",
+          barangay: "",
           password: ""
-        });
-      } else {
-        const idx = mapped.findIndex(u => u.id === user.id);
-        if (idx >= 0) {
-          mapped[idx] = {
-            ...mapped[idx],
-            ecoPoints: user.ecoPoints,
-            streak: user.streak,
-            badge: user.badge,
-            email: user.email || "",
-            phoneNumber: user.phoneNumber || "",
-            address: user.address || "",
-            gender: user.gender || mapped[idx].gender || "",
-            barangay: user.barangay || mapped[idx].barangay
-          };
-        }
-      }
-      AppState.users = mapped;
+        }));
+      AppState.users = [meRow, ...others];
     } else {
       AppState.users = [
         {
@@ -951,7 +944,8 @@ function updateHomeStats() {
   const stats = document.querySelectorAll("#screen-home .stats-grid .stat-value");
   if (stats[0]) stats[0].innerHTML = `${petToday.toFixed(1)}<span style="font-size:0.8rem">kg</span>`;
   if (stats[1]) stats[1].innerHTML = `${hdpeToday.toFixed(1)}<span style="font-size:0.8rem">kg</span>`;
-  if (stats[2]) stats[2].textContent = user.ecoPoints;
+  const ecoPts = Number(user.ecoPoints) || 0;
+  if (stats[2]) stats[2].textContent = ecoPts;
   if (stats[3]) stats[3].textContent = logs.length;
 
   const streakEl = document.querySelector("#screen-home .welcome-banner div[style*='text-align:right'] div[style*='font-size:1.8rem']");
@@ -1108,7 +1102,7 @@ function clearSession() {
 function loadSession() {
   const parsed = SessionManager.load();
   if (!parsed || !parsed.currentUserId) return;
-  const user = AppState.users.find(u => u.id === parsed.currentUserId);
+  const user = AppState.users.find(u => sameUserId(u.id, parsed.currentUserId));
   if (!user) {
     SessionManager.clear();
     return;
@@ -1181,7 +1175,8 @@ const AuthService = {
     return { ok: true, user };
   },
   currentUser() {
-    return AppState.users.find(u => u.id === AppState.currentUserId) || null;
+    if (AppState.currentUserId == null) return null;
+    return AppState.users.find(u => sameUserId(u.id, AppState.currentUserId)) || null;
   }
 };
 
@@ -1250,7 +1245,7 @@ const VerificationService = {
     log.verifiedBy = collectorId;
     log.completedAt = nowIso();
     log.ecoPointsAwarded = Math.round(log.weight * (log.type === "PET" ? 20 : 25));
-    const user = AppState.users.find(u => u.id === log.userId);
+    const user = AppState.users.find(u => sameUserId(u.id, log.userId));
     if (user) {
       user.ecoPoints += log.ecoPointsAwarded;
       user.streak += 1;
@@ -1926,7 +1921,7 @@ function renderProfile() {
   if (streak) streak.textContent = String(streakVal);
   if (totalLogs) totalLogs.textContent = logs !== null ? String(logCount) : "0";
   if (badge) badge.textContent = `⭐ ${eco} pts`;
-  document.querySelectorAll(".ecopoints-value").forEach(el => {
+  document.querySelectorAll("#screen-home .ecopoints-value, #screen-rewards .ecopoints-value").forEach(el => {
     el.textContent = eco;
   });
 }
