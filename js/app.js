@@ -485,8 +485,7 @@ const ROLE_ALLOWED_SCREENS = {
     "profile",
     "leaderboard",
     "notifications",
-    "about",
-    "xml-viewer"
+    "about"
   ]),
   collector: new Set(["collector", "collector-history", "collector-profile"]),
   admin: new Set(["admin", "admin-profile"])
@@ -1830,25 +1829,11 @@ function renderRecentLogs() {
     `).join("");
     }
   }
-  const history = document.getElementById("full-history");
-  if (history) {
-    if (!user || mine.length === 0) {
-      history.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">${NO_RECENT_ACTIVITY_TEXT}</p>`;
-    } else {
-      history.innerHTML = mine.map(l => `
-      <div class="card" style="margin-bottom:8px">
-        <strong>${l.type}</strong><br/>
-        ${l.weight} kg • <strong>${l.status}</strong>
-        ${l.status === "Completed" ? `• +${l.ecoPointsAwarded} pts` : ""}<br/>
-        <small>${formatDateTime(l.createdAt)}</small>
-      </div>
-    `).join("");
-    }
-  }
 }
 
 function renderNotifications() {
   const el = document.getElementById("notif-list");
+  const historyEl = document.getElementById("activity-disposal-history");
   if (!el) return;
   const user = AuthService.currentUser();
   const rows = notificationsForUser(user).slice(0, 20);
@@ -1862,6 +1847,28 @@ function renderNotifications() {
   `
     )
     .join("");
+
+  if (historyEl) {
+    const logs = user ? wasteLogsForUser(user) : [];
+    if (!logs.length) {
+      historyEl.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">${NO_RECENT_ACTIVITY_TEXT}</p>`;
+    } else {
+      historyEl.innerHTML = logs
+        .slice()
+        .sort((a, b) => logReferenceInstant(b).getTime() - logReferenceInstant(a).getTime())
+        .map(
+          l => `
+      <div class="card" style="margin-bottom:8px">
+        <strong>${l.type}</strong><br/>
+        ${l.weight} kg • <strong>${l.status}</strong>
+        ${l.status === "Completed" ? `• +${l.ecoPointsAwarded} pts` : ""}<br/>
+        <small>${formatDateTime(l.createdAt)}</small>
+      </div>
+    `
+        )
+        .join("");
+    }
+  }
 }
 
 function renderLeaderboard() {
@@ -1881,7 +1888,9 @@ function renderLeaderboard() {
       <span>
         ${(() => {
           const r = computeHouseholdDisposalRank(u);
-          const isUnranked = !r || (Number(r.verifiedCount) || 0) <= 0 || r.rank == null;
+          const hasPoints = (Number(u.ecoPoints) || 0) > 0;
+          const hasVerified = (Number(r?.verifiedCount) || 0) > 0;
+          const isUnranked = !hasPoints && (!r || !hasVerified || r.rank == null);
           return `${isUnranked ? "Unranked" : "#" + r.rank} ${u.name || "User"}`;
         })()}
       </span>
@@ -1902,15 +1911,23 @@ function renderProfile() {
   const profileAvatar = document.getElementById("profile-avatar");
   const pts = document.getElementById("profile-pts");
   const streak = document.getElementById("profile-streak");
+  const totalLogs = document.getElementById("profile-total-logs");
   const badge = document.getElementById("eco-badge-pts");
+  const logs = user && normalizeRole(user.role) === "household" ? wasteLogsForUser(user) : null;
+  const eco = user ? Number(user.ecoPoints) || 0 : 0;
+  const streakVal = user ? Number(user.streak) || 0 : 0;
+  const logCount = logs ? logs.length : 0;
+
   if (profileAvatar) profileAvatar.textContent = profileAvatarEmoji(user);
   if (name) name.textContent = user ? (user.name || "User") : "User";
   if (profileAddress) profileAddress.textContent = user ? getUserBarangayLabel(user) : NO_ADDRESS_LABEL;
-  if (pts) pts.textContent = user ? user.ecoPoints : "0";
-  if (streak) streak.textContent = user ? user.streak : "0";
-  if (badge) badge.textContent = `⭐ ${user ? user.ecoPoints : 0} pts`;
+  // Match dashboard #screen-home stats: ecoPoints, streak, and user's log count only.
+  if (pts) pts.textContent = String(eco);
+  if (streak) streak.textContent = String(streakVal);
+  if (totalLogs) totalLogs.textContent = logs !== null ? String(logCount) : "0";
+  if (badge) badge.textContent = `⭐ ${eco} pts`;
   document.querySelectorAll(".ecopoints-value").forEach(el => {
-    el.textContent = user ? user.ecoPoints : 0;
+    el.textContent = eco;
   });
 }
 

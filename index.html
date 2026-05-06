@@ -233,7 +233,7 @@
         <div id="recent-logs">
           <!-- Rendered by JS -->
         </div>
-        <button type="button" class="btn btn-ghost" onclick="goTo('track', { trackSubView: 'history' })" style="font-size:0.85rem">View all logs →</button>
+        <button type="button" class="btn btn-ghost" onclick="goTo('notifications');renderNotifications()" style="font-size:0.85rem">View all logs →</button>
       </div>
 
       <!-- Quick Navigate -->
@@ -335,13 +335,6 @@
         </button>
       </div>
 
-      <!-- History (anchor for “View all logs” deep link) -->
-      <div id="track-disposal-history" class="track-history-block">
-        <div class="section-title track-history-title">📋 Disposal History</div>
-        <div class="card">
-          <div id="full-history"></div>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -436,16 +429,10 @@
           </div>
           <div class="profile-stat-divider"></div>
           <div class="profile-stat-col">
-            <div class="profile-stat-value">23</div>
+            <div class="profile-stat-value" id="profile-total-logs">0</div>
             <div class="profile-stat-label">Total Logs</div>
           </div>
         </div>
-      </div>
-
-      <!-- Badges -->
-      <div class="profile-section-card">
-        <div class="section-title">🏅 My Badges</div>
-        <div class="badge-grid" id="badges-grid"></div>
       </div>
 
       <!-- Menu -->
@@ -465,11 +452,6 @@
           <div class="profile-menu-item" onclick="goTo('about')">
             <div class="pm-icon">ℹ️</div>
             <div class="pm-label">About &amp; Legal (RA 9003)</div>
-            <div class="pm-arrow">›</div>
-          </div>
-          <div class="profile-menu-item" onclick="goTo('xml-viewer')">
-            <div class="pm-icon">📄</div>
-            <div class="pm-label">View Data (XML/XSLT)</div>
             <div class="pm-arrow">›</div>
           </div>
           <div class="profile-menu-item" onclick="logout()" style="color:var(--danger)">
@@ -709,6 +691,10 @@
     </div>
     <div class="page-content">
       <div id="notif-list"></div>
+      <div class="section-title" style="margin-top:14px">📦 Disposal History</div>
+      <div class="card">
+        <div id="activity-disposal-history"></div>
+      </div>
     </div>
   </section>
 
