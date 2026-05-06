@@ -691,12 +691,81 @@ function verifiedLogsHandledByCollector(logs, collectorId, year = new Date().get
   return sortedVerifiedLogsYear(logs, year).filter(l => String(l.verifiedBy || "") === cid);
 }
 
+async function setAuthenticatedImageSrc(img, apiRelativePath) {
+  if (!img || !apiRelativePath) return;
+  const prev = img.dataset.bbBlobUrl;
+  if (prev) {
+    try {
+      URL.revokeObjectURL(prev);
+    } catch (_e) {
+      /* ignore */
+    }
+    delete img.dataset.bbBlobUrl;
+  }
+  const base = await getApiBase();
+  const tok = getToken();
+  if (!tok) return;
+  const res = await fetch(`${base}${apiRelativePath}`, { headers: { Authorization: `Bearer ${tok}` } });
+  if (!res.ok) {
+    img.alt = "Photo unavailable";
+    img.classList.add("collector-proof-img--missing");
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  img.dataset.bbBlobUrl = url;
+  img.src = url;
+}
+
+/** Photo proof submitted with the household log (collector / offline local). */
+function collectorProofMarkup(log) {
+  const id = String(log.id || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const hasData = log.photoPath && String(log.photoPath).startsWith("data:image/");
+  if (apiMode && getToken() && log.hasPhoto && id) {
+    return `<div class="bb-proof-wrap">
+        <p class="bb-proof-label"><small>Household photo</small></p>
+        <div class="bb-proof-mount" data-log-id="${id}" data-auth-photo="1"></div>
+      </div>`;
+  }
+  if (hasData) {
+    return `<div class="bb-proof-wrap">
+        <p class="bb-proof-label"><small>Household photo</small></p>
+        <img class="collector-proof-img" alt="Household photo proof" src=${JSON.stringify(log.photoPath)} />
+      </div>`;
+  }
+  return "";
+}
+
+async function hydrateCollectorLogPhotoMounts() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "collector") return;
+  if (!apiMode || !getToken()) return;
+  const roots = document.querySelectorAll(
+    "#screen-collector, #screen-collector-history, #screen-collector-profile"
+  );
+  for (const root of roots) {
+    const mounts = root.querySelectorAll('.bb-proof-mount[data-auth-photo="1"]');
+    for (const mount of mounts) {
+      if (mount.querySelector("img")) continue;
+      const rawId = mount.getAttribute("data-log-id");
+      if (!rawId) continue;
+      const img = document.createElement("img");
+      img.className = "collector-proof-img";
+      img.alt = "Household photo proof";
+      mount.appendChild(img);
+      await setAuthenticatedImageSrc(img, `/logs/${encodeURIComponent(rawId)}/photo`);
+    }
+  }
+}
+
 function htmlVerifiedLogCardReadOnly(log, opts = {}) {
   const showVerifier = opts.showVerifier !== false;
   const verifier = showVerifier && log.verifiedBy ? ` · Verified by ${log.verifiedBy}` : "";
+  const proof = collectorProofMarkup(log);
   return `
       <div class="card" style="margin-bottom:8px">
         <strong>${log.userName}</strong> • ${log.type} • ${log.weight} kg<br/>
+        ${proof}
         <small>${formatDateTime(log.completedAt || log.createdAt)}${log.ecoPointsAwarded ? ` · +${log.ecoPointsAwarded} pts` : ""}${verifier}</small>
       </div>
     `;
@@ -2146,6 +2215,7 @@ function renderCollectorView() {
     <div class="card" style="margin-bottom:10px">
       <strong>${log.userName}</strong> • ${log.type} • ${log.weight} kg<br/>
       <small>Status: <strong>${statusLabel(log)}</strong> · ${logCalendarYear(log)}</small>
+      ${collectorProofMarkup(log)}
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn btn-outline" onclick="handleCollectorDecision('${log.id}',false)">Not Verified</button>
         <button class="btn btn-primary" onclick="handleCollectorDecision('${log.id}',true)">Verify</button>
@@ -3934,6 +4004,7 @@ function refreshUI() {
   renderNotifications();
   renderCollectorView();
   renderCollectorHistoryPage();
+  void hydrateCollectorLogPhotoMounts();
   renderLeaderboard();
   renderAdminAnalytics();
   renderAdminWasteLogs();

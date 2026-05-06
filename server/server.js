@@ -70,6 +70,32 @@ if (!fs.existsSync(redemptionUploadDir)) {
     fs.mkdirSync(redemptionUploadDir, { recursive: true });
 }
 
+const wasteLogsUploadDir = path.join(__dirname, 'uploads', 'waste_logs');
+if (!fs.existsSync(wasteLogsUploadDir)) {
+    fs.mkdirSync(wasteLogsUploadDir, { recursive: true });
+}
+
+/** Save household waste-log photo (data URL from client). Returns stored filename or null. */
+function persistWasteLogPhotoDataUrl(photoDataUrl, photoFileName) {
+    if (!photoDataUrl || typeof photoDataUrl !== 'string') return null;
+    const match = String(photoDataUrl).match(/^data:(image\/(?:jpeg|png));base64,(.+)$/i);
+    if (!match) return null;
+    const mime = match[1].toLowerCase();
+    const buf = Buffer.from(match[2], 'base64');
+    if (buf.length > 2 * 1024 * 1024) {
+        throw new Error('Photo must be 2MB or smaller');
+    }
+    const ext = mime === 'image/png' ? '.png' : '.jpg';
+    const safeBase =
+        String(photoFileName || 'waste')
+            .replace(/[^a-z0-9._-]/gi, '_')
+            .slice(0, 40) || 'waste';
+    const fname = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}-${safeBase}${ext}`;
+    const full = path.join(wasteLogsUploadDir, fname);
+    fs.writeFileSync(full, buf);
+    return fname;
+}
+
 const redemptionUpload = multer({
     storage: multer.diskStorage({
         destination: (_req, _file, cb) => cb(null, redemptionUploadDir),
@@ -223,6 +249,20 @@ async function ensureWasteLogsTable() {
     `);
 }
 
+async function ensureWasteLogsPhotoColumn() {
+    try {
+        const [cols] = await pool.query(`SHOW COLUMNS FROM waste_logs LIKE 'photo_filename'`);
+        if (!cols.length) {
+            await pool.query(
+                `ALTER TABLE waste_logs ADD COLUMN photo_filename VARCHAR(255) NULL DEFAULT NULL AFTER notes`
+            );
+            console.log('✅ waste_logs.photo_filename column added');
+        }
+    } catch (err) {
+        console.error('❌ ensureWasteLogsPhotoColumn:', err.message);
+    }
+}
+
 /** Metadata for QR reward uploads; rows survive process restarts (see sql/mysql-workbench-reward-redemptions.sql). */
 async function ensureRewardRedemptionsTable() {
     await pool.query(`
@@ -258,7 +298,8 @@ function mapWasteLogRow(row) {
         notes: row.notes || '',
         createdAt: toIso(row.created_at),
         logDate: toIso(row.log_date),
-        completedAt: toIso(row.completed_at)
+        completedAt: toIso(row.completed_at),
+        hasPhoto: Boolean(row.photo_filename)
     };
 }
 
@@ -270,6 +311,7 @@ function mapWasteLogRow(row) {
         connection.release();
         await readUsersColumns();
         await ensureWasteLogsTable();
+        await ensureWasteLogsPhotoColumn();
         await ensureRewardRedemptionsTable();
         await ensureAdminAccount();
     } catch (err) {
@@ -518,13 +560,13 @@ app.get('/api/logs', authRequired, requireDb, async (req, res) => {
         if (viewer === 'collector' || viewer === 'admin') {
             [rows] = await pool.query(
                 `SELECT log_id, user_id, user_name, waste_type, weight, status, eco_points_awarded,
-                        verified_by, notes, log_date, created_at, completed_at
+                        verified_by, notes, photo_filename, log_date, created_at, completed_at
                  FROM waste_logs ORDER BY created_at DESC LIMIT 500`
             );
         } else {
             [rows] = await pool.query(
                 `SELECT log_id, user_id, user_name, waste_type, weight, status, eco_points_awarded,
-                        verified_by, notes, log_date, created_at, completed_at
+                        verified_by, notes, photo_filename, log_date, created_at, completed_at
                  FROM waste_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 200`,
                 [uid]
             );
@@ -536,6 +578,42 @@ app.get('/api/logs', authRequired, requireDb, async (req, res) => {
     }
 });
 
+app.get('/api/logs/:id/photo', authRequired, requireDb, async (req, res) => {
+    const logId = String(req.params.id || '');
+    const viewer = mapRoleForClient(req.user.role);
+    const uid = Number(req.user.id);
+    try {
+        const [rows] = await pool.query(
+            `SELECT log_id, user_id, photo_filename FROM waste_logs WHERE log_id = ? LIMIT 1`,
+            [logId]
+        );
+        if (!rows.length || !rows[0].photo_filename) {
+            return res.status(404).json({ message: 'Photo not found' });
+        }
+        const row = rows[0];
+        if (viewer === 'collector' || viewer === 'admin') {
+            /* ok */
+        } else if (viewer === 'household' && Number(row.user_id) === uid) {
+            /* household may view own proof */
+        } else {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
+        const safeName = path.basename(String(row.photo_filename));
+        const filePath = path.join(wasteLogsUploadDir, safeName);
+        if (!safeName || !fs.existsSync(filePath)) {
+            return res.status(404).json({ message: 'Photo missing on server' });
+        }
+        const ext = path.extname(safeName).toLowerCase();
+        const ctype = ext === '.png' ? 'image/png' : 'image/jpeg';
+        res.setHeader('Content-Type', ctype);
+        fs.createReadStream(filePath).pipe(res);
+    } catch (err) {
+        console.error('❌ GET log photo:', err.message);
+        return res.status(500).json({ message: err.message || 'Server error' });
+    }
+});
+
 app.post('/api/logs', authRequired, requireDb, requireRoles('household'), async (req, res) => {
     const body = req.body || {};
     const wt = body.wasteType === 'rec' ? 'HDPE' : 'PET';
@@ -544,6 +622,14 @@ app.post('/api/logs', authRequired, requireDb, requireRoles('household'), async 
 
     const uid = Number(req.user.id);
     try {
+        let photoFilename = null;
+        try {
+            photoFilename = persistWasteLogPhotoDataUrl(body.photoDataUrl, body.photoFileName);
+        } catch (photoErr) {
+            console.error('❌ POST /logs photo:', photoErr.message);
+            return res.status(400).json({ message: photoErr.message || 'Invalid photo' });
+        }
+
         const [urows] = await pool.query(`SELECT ${usersIdColumn()} AS id, full_name, email FROM users WHERE ${usersIdColumn()} = ?`, [
             uid
         ]);
@@ -555,9 +641,18 @@ app.post('/api/logs', authRequired, requireDb, requireRoles('household'), async 
         if (Number.isNaN(logDate.getTime())) logDate = new Date();
 
         await pool.query(
-            `INSERT INTO waste_logs (log_id, user_id, user_name, waste_type, weight, status, notes, log_date)
-             VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)`,
-            [logId, uid, displayName, wt, weight, String(body.notes || '').slice(0, 2000), logDate]
+            `INSERT INTO waste_logs (log_id, user_id, user_name, waste_type, weight, status, notes, log_date, photo_filename)
+             VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?, ?)`,
+            [
+                logId,
+                uid,
+                displayName,
+                wt,
+                weight,
+                String(body.notes || '').slice(0, 2000),
+                logDate,
+                photoFilename
+            ]
         );
 
         const [rows] = await pool.query(`SELECT * FROM waste_logs WHERE log_id = ?`, [logId]);

@@ -1457,6 +1457,31 @@ a { text-decoration: none; color: inherit; }
 }
 
 /* ---- Collector Screen ---- */
+.bb-proof-wrap {
+  margin: 10px 0 4px;
+}
+.bb-proof-label {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+}
+.bb-proof-mount {
+  min-height: 8px;
+}
+.collector-proof-img {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.collector-proof-img--missing {
+  max-height: 120px;
+  object-fit: cover;
+  opacity: 0.5;
+}
 .pickup-item {
   display: flex;
   align-items: center;
