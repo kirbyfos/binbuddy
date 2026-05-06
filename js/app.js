@@ -33,17 +33,28 @@ function candidateApiBases() {
     if (explicit) list.push(explicit);
     const stored = normalizeApiBase(w.localStorage?.getItem(API_BASE_STORAGE_KEY));
     if (stored) list.push(stored);
+
     const meta = w.document?.querySelector?.('meta[name="binbuddy-api-base"]')?.getAttribute?.("content");
     const metaNorm = normalizeApiBase(meta);
-    if (metaNorm) list.push(metaNorm);
-
-    // same-origin
-    const origin = String(w.location?.origin || "").trim();
-    if (origin) list.push(`${origin}/api`);
-
-    // api. subdomain
     const host = String(w.location?.hostname || "").trim();
     const proto = String(w.location?.protocol || "https:").trim();
+    const isLocalHost = host === "localhost" || host === "127.0.0.1";
+    const origin = String(w.location?.origin || "").trim();
+    const originApi = origin && /^https?:/i.test(origin) ? `${origin}/api` : "";
+
+    /**
+     * index.html often ships with meta pointing at http://localhost:3000/api for dev.
+     * On a real host, probing that URL first blocks startup ~seconds per attempt (was sequential + 6.5s timeout).
+     * Local dev: meta before same-origin. Deployed: same-origin /api before localhost meta.
+     */
+    if (isLocalHost) {
+      if (metaNorm) list.push(metaNorm);
+      if (originApi) list.push(originApi);
+    } else {
+      if (originApi) list.push(originApi);
+      if (metaNorm) list.push(metaNorm);
+    }
+
     if (host && !host.startsWith("api.")) {
       list.push(`${proto}//api.${host}/api`);
     }
@@ -52,14 +63,14 @@ function candidateApiBases() {
   }
   list.push("/api");
 
-  // de-dupe while preserving order
   const seen = new Set();
   return list.filter(x => (x && !seen.has(x) ? (seen.add(x), true) : false));
 }
 
-async function probeApiBase(base) {
+/** Health check for one API base. Keep timeout short — many candidates may be tried in parallel. */
+async function probeApiBase(base, timeoutMs = 2800) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 6500);
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${base}/health`, { signal: ctrl.signal, headers: { Accept: "application/json" } });
     if (!res.ok) return false;
@@ -79,14 +90,14 @@ async function getApiBase() {
   if (resolvingApiBasePromise) return resolvingApiBasePromise;
   resolvingApiBasePromise = (async () => {
     const candidates = candidateApiBases();
-    for (const c of candidates) {
-      if (await probeApiBase(c)) {
-        resolvedApiBase = c;
-        return resolvedApiBase;
-      }
+    if (!candidates.length) {
+      resolvedApiBase = "/api";
+      return resolvedApiBase;
     }
-    // If none respond, fall back to the first candidate (most likely correct) and surface a useful error later.
-    resolvedApiBase = candidates[0] || "/api";
+    /** Probe all candidates in parallel so we don't wait N × timeout when the first entries are dead (e.g. localhost meta on a deployed site). */
+    const results = await Promise.all(candidates.map(c => probeApiBase(c).then(ok => ({ c, ok }))));
+    const hit = results.find(r => r.ok);
+    resolvedApiBase = hit ? hit.c : candidates[0] || "/api";
     return resolvedApiBase;
   })();
   return resolvingApiBasePromise;
@@ -1627,7 +1638,7 @@ function initSplash(_restoredSession) {
     }
     const ae = document.getElementById("screen-auth");
     if (ae) resetViewportScroll(ae);
-  }, 1800);
+  }, 1200);
 }
 
 function syncTrackScreenSubView(screen, trackSubView) {
