@@ -2331,7 +2331,6 @@ function initGuide() {
             (t) => `
           <div class="bb-guide-chip">
             ${t}
-            <small>Tap chips above to log PET/HDPE</small>
           </div>
         `
           )
