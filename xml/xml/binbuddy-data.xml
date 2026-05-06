@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  BinBuddy - Waste Data XML Structure
+  Powerpuff w/ Mojo Jojo - Technopreneurship Final Project
+  This XML file defines waste logs, users, and rewards catalog data
+-->
+<binbuddy>
+
+  <!-- ===== USERS ===== -->
+  <users>
+    <user id="USR001" role="household">
+      <name>Maria Santos</name>
+      <email>maria@email.com</email>
+      <mobile>09171234567</mobile>
+      <barangay>Holy Spirit</barangay>
+      <city>Quezon City</city>
+      <ecoPoints>1245</ecoPoints>
+      <streak>7</streak>
+      <level>BinBuddy</level>
+      <joinDate>2026-01-15</joinDate>
+      <verified>true</verified>
+    </user>
+    <user id="USR002" role="household">
+      <name>Juan dela Cruz</name>
+      <email>juan@email.com</email>
+      <mobile>09181234567</mobile>
+      <barangay>Holy Spirit</barangay>
+      <city>Quezon City</city>
+      <ecoPoints>1180</ecoPoints>
+      <streak>5</streak>
+      <level>Green Warrior</level>
+      <joinDate>2026-01-20</joinDate>
+      <verified>true</verified>
+    </user>
+    <user id="USR003" role="collector">
+      <name>Roberto Cruz</name>
+      <email>roberto@qcgov.ph</email>
+      <mobile>09191234567</mobile>
+      <barangay>Holy Spirit</barangay>
+      <city>Quezon City</city>
+      <collectorId>COL-2026-001</collectorId>
+      <route>Zone A - Brgy. Holy Spirit</route>
+      <joinDate>2026-01-01</joinDate>
+      <verified>true</verified>
+    </user>
+    <user id="USR004" role="admin">
+      <name>Brgy. Holy Spirit Admin</name>
+      <email>admin@holyspirit.qc.gov.ph</email>
+      <barangay>Holy Spirit</barangay>
+      <city>Quezon City</city>
+      <adminLevel>barangay</adminLevel>
+      <joinDate>2025-12-01</joinDate>
+    </user>
+  </users>
+
+  <!-- ===== WASTE LOGS ===== -->
+  <wasteLogs>
+    <log id="LOG001" userId="USR001">
+      <type>biodegradable</type>
+      <category>Food Scraps</category>
+      <quantity unit="kg">1.2</quantity>
+      <date>2026-04-14</date>
+      <time>08:30</time>
+      <method>manual</method>
+      <verified>true</verified>
+      <verifiedBy>USR003</verifiedBy>
+      <ecoPointsEarned>25</ecoPointsEarned>
+      <notes>Leftover food and vegetable peels</notes>
+    </log>
+    <log id="LOG002" userId="USR001">
+      <type>recyclable</type>
+      <category>Plastic Bottles</category>
+      <quantity unit="kg">0.8</quantity>
+      <date>2026-04-13</date>
+      <time>09:00</time>
+      <method>qr_scan</method>
+      <verified>true</verified>
+      <verifiedBy>USR003</verifiedBy>
+      <ecoPointsEarned>40</ecoPointsEarned>
+      <notes>PET bottles, rinsed and clean</notes>
+    </log>
+    <log id="LOG003" userId="USR001">
+      <type>residual</type>
+      <category>Mixed Trash</category>
+      <quantity unit="kg">0.5</quantity>
+      <date>2026-04-12</date>
+      <time>07:45</time>
+      <method>manual</method>
+      <verified>false</verified>
+      <ecoPointsEarned>10</ecoPointsEarned>
+      <notes>Non-recyclable household waste</notes>
+    </log>
+    <log id="LOG004" userId="USR002">
+      <type>recyclable</type>
+      <category>Cardboard</category>
+      <quantity unit="kg">2.5</quantity>
+      <date>2026-04-14</date>
+      <time>10:15</time>
+      <method>qr_scan</method>
+      <verified>true</verified>
+      <verifiedBy>USR003</verifiedBy>
+      <ecoPointsEarned>40</ecoPointsEarned>
+      <notes>Old boxes and cardboard packaging</notes>
+    </log>
+    <log id="LOG005" userId="USR001">
+      <type>special</type>
+      <category>E-Waste</category>
+      <quantity unit="pcs">3</quantity>
+      <date>2026-04-11</date>
+      <time>11:00</time>
+      <method>manual</method>
+      <verified>true</verified>
+      <verifiedBy>USR003</verifiedBy>
+      <ecoPointsEarned>15</ecoPointsEarned>
+      <notes>Old batteries and a broken phone</notes>
+    </log>
+  </wasteLogs>
+
+  <!-- ===== REWARDS CATALOG ===== -->
+  <rewards>
+    <reward id="RWD001">
+      <name>₱50 Mobile Load</name>
+      <icon>📱</icon>
+      <pointsCost>500</pointsCost>
+      <category>telecommunications</category>
+      <sponsor>Globe Telecom</sponsor>
+      <available>true</available>
+      <description>₱50 prepaid mobile load for any network</description>
+      <expiryDays>30</expiryDays>
+    </reward>
+    <reward id="RWD002">
+      <name>SM Voucher ₱100</name>
+      <icon>🛒</icon>
+      <pointsCost>1000</pointsCost>
+      <category>voucher</category>
+      <sponsor>SM Supermalls</sponsor>
+      <available>true</available>
+      <description>₱100 SM shopping voucher</description>
+      <expiryDays>60</expiryDays>
+    </reward>
+    <reward id="RWD003">
+      <name>Starbucks Discount</name>
+      <icon>☕</icon>
+      <pointsCost>800</pointsCost>
+      <category>food_beverage</category>
+      <sponsor>Starbucks Philippines</sponsor>
+      <available>true</available>
+      <description>20% off any Starbucks beverage</description>
+      <expiryDays>14</expiryDays>
+    </reward>
+    <reward id="RWD004">
+      <name>Beep Card Reload</name>
+      <icon>🚌</icon>
+      <pointsCost>600</pointsCost>
+      <category>transportation</category>
+      <sponsor>AF Payments Inc.</sponsor>
+      <available>true</available>
+      <description>₱50 Beep card reload for MRT/LRT/buses</description>
+      <expiryDays>90</expiryDays>
+    </reward>
+    <reward id="RWD005">
+      <name>Puregold Discount</name>
+      <icon>🛍️</icon>
+      <pointsCost>400</pointsCost>
+      <category>grocery</category>
+      <sponsor>Puregold Price Club</sponsor>
+      <available>true</available>
+      <description>15% off grocery purchase at Puregold</description>
+      <expiryDays>30</expiryDays>
+    </reward>
+    <reward id="RWD006">
+      <name>Mystery Eco Box</name>
+      <icon>🎁</icon>
+      <pointsCost>300</pointsCost>
+      <category>surprise</category>
+      <sponsor>BinBuddy Partners</sponsor>
+      <available>true</available>
+      <description>Surprise eco-friendly product box</description>
+      <expiryDays>30</expiryDays>
+    </reward>
+  </rewards>
+
+  <!-- ===== BARANGAY DATA ===== -->
+  <barangays>
+    <barangay id="BRG001">
+      <name>Holy Spirit</name>
+      <city>Quezon City</city>
+      <totalHouseholds>4250</totalHouseholds>
+      <activeUsers>312</activeUsers>
+      <totalWasteCollected unit="tons">89.4</totalWasteCollected>
+      <segregationRate>72</segregationRate>
+      <recyclingRate>41</recyclingRate>
+      <ecoPointsDistributed>48750</ecoPointsDistributed>
+      <subscriptionPlan>premium</subscriptionPlan>
+    </barangay>
+    <barangay id="BRG002">
+      <name>Batasan Hills</name>
+      <city>Quezon City</city>
+      <totalHouseholds>6800</totalHouseholds>
+      <activeUsers>498</activeUsers>
+      <totalWasteCollected unit="tons">142.1</totalWasteCollected>
+      <segregationRate>65</segregationRate>
+      <recyclingRate>35</recyclingRate>
+      <ecoPointsDistributed>72300</ecoPointsDistributed>
+      <subscriptionPlan>basic</subscriptionPlan>
+    </barangay>
+    <barangay id="BRG003">
+      <name>Commonwealth</name>
+      <city>Quezon City</city>
+      <totalHouseholds>5100</totalHouseholds>
+      <activeUsers>287</activeUsers>
+      <totalWasteCollected unit="tons">101.8</totalWasteCollected>
+      <segregationRate>58</segregationRate>
+      <recyclingRate>29</recyclingRate>
+      <ecoPointsDistributed>39200</ecoPointsDistributed>
+      <subscriptionPlan>basic</subscriptionPlan>
+    </barangay>
+  </barangays>
+
+  <!-- ===== ANNOUNCEMENTS ===== -->
+  <announcements>
+    <announcement id="ANN001" barangayId="BRG001">
+      <title>Special E-Waste Drive</title>
+      <message>Drop off old electronics at the Brgy. Holy Spirit Hall this Saturday, April 18, 8AM-12PM. Earn double EcoPoints!</message>
+      <date>2026-04-14</date>
+      <priority>high</priority>
+    </announcement>
+    <announcement id="ANN002" barangayId="BRG001">
+      <title>April Collection Schedule</title>
+      <message>Regular waste collection: Mon/Wed/Fri 6AM-9AM. Recyclables: Tuesdays only. Special waste: Last Saturday of the month.</message>
+      <date>2026-04-01</date>
+      <priority>normal</priority>
+    </announcement>
+  </announcements>
+
+</binbuddy>

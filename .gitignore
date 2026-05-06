@@ -1,0 +1,18 @@
+node_modules/
+server/node_modules/
+
+# local env / secrets
+server/.env
+.env
+*.pem
+
+# runtime data
+server/data/
+server/uploads/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+
+
+server/AIVEN-SETUP.txt

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: binbuddy
+    env: node
+    plan: free
+    buildCommand: npm ci && npm --prefix server ci
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PORT
+        value: "17100"
+      - key: DB_NAME
+        value: defaultdb
+      # Set these in Render dashboard as "Secret" values:
+      # - DB_HOST
+      # - DB_USER
+      # - DB_PASSWORD
+      # - JWT_SECRET
+      # Optional: DB_CA_PEM (paste Aiven CA certificate here)
+

@@ -168,6 +168,29 @@ BinBuddy is a **Smart Waste Tracking & Rewards Platform** that:
 
 ---
 
+## 🌐 Deploy (Cloud hosting)
+
+### What Aiven does (and doesn’t)
+- **Aiven hosts the MySQL database** (shared, cloud, non-local).
+- **You still need to host the Node.js app/API** somewhere (Render/Railway/Fly/VPS). This repo already serves both the UI + API from `server/server.js`.
+
+### Recommended: Render
+This repo includes `render.yaml` for one-click deploy.
+
+- **Build command**: `npm ci && npm --prefix server ci`
+- **Start command**: `npm start`
+
+Set these environment variables in your host (use your Aiven connection parameters):
+- `DB_HOST` (example: `mysql-3d4b176a-kirbyfos69-59bd.h.aivencloud.com`)
+- `DB_PORT` (Aiven MySQL port, commonly `17100`)
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME` (example: `defaultdb`)
+- `JWT_SECRET` (set a strong random secret)
+
+SSL:
+- Prefer setting `DB_CA_PEM` (paste the Aiven CA certificate PEM). If unset, the server will use `server/ca.pem` when present.
+
 ## 🗄️ Database (SQL)
 
 Full schema in `/sql/binbuddy-schema.sql`:

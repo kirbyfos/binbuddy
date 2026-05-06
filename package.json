@@ -1,0 +1,30 @@
+{
+  "name": "binbuddy",
+  "version": "1.0.0",
+  "description": "> **Technopreneurship Final Project**  \r > Team: **Powerpuff w/ Mojo Jojo** | AY 2025–2026",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "npm --prefix server ci",
+    "start": "npm --prefix server start",
+    "dev": "npm --prefix server run dev",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shielamaeagno/BINBUDDY.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/shielamaeagno/BINBUDDY/issues"
+  },
+  "homepage": "https://github.com/shielamaeagno/BINBUDDY#readme",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mysql2": "^3.22.3"
+  }
+}

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BinBuddy logo">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="#f0fdf4"/>
+  <circle cx="256" cy="256" r="170" fill="url(#g)"/>
+  <path d="M256 130c-37 0-69 16-90 41l35 18c13-12 32-19 55-19 40 0 73 24 86 58h-40l58 70 58-70h-36c-15-58-67-98-126-98z" fill="#fff"/>
+  <path d="M163 284l-58 70h36c15 58 67 98 126 98 37 0 69-16 90-41l-35-18c-13 12-32 19-55 19-40 0-73-24-86-58h40l-58-70z" fill="#fff"/>
+</svg>

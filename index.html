@@ -4,10 +4,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta name="theme-color" content="#006400"/>
+  <!-- Optional: point the web UI at a different Node API host (must end with /api or a base host). -->
+  <meta name="binbuddy-api-base" content="http://localhost:3000/api"/>
   <title>BinBuddy – Smart Waste Tracking</title>
   <link rel="stylesheet" href="css/style.css"/>
-  <!-- Favicon emoji -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♻️</text></svg>"/>
+  <link rel="icon" type="image/svg+xml" href="assets/binbuddy-logo.svg"/>
 </head>
 <body>
 
@@ -43,7 +44,9 @@
        SPLASH SCREEN
   ==================================================== -->
   <section id="screen-splash" class="screen active">
-    <div class="splash-icon">♻️</div>
+    <div class="splash-icon" aria-hidden="true">
+      <img src="assets/binbuddy-logo.svg" alt=""/>
+    </div>
     <div class="splash-logo">Bin<span>Buddy</span></div>
     <div class="splash-tagline">Smart Waste Tracking & Rewards Platform<br/>Lipa City, Philippines</div>
     <div class="splash-loader">
@@ -61,7 +64,7 @@
         <div class="auth-brand-stack">
           <img
             class="auth-brand-logo"
-            src="assets/binbuddy-logo.png"
+            src="assets/binbuddy-logo.svg"
             alt="BinBuddy logo"
           />
           <h1 class="auth-split-brand-title">BinBuddy</h1>
@@ -124,6 +127,11 @@
             </div>
             <button type="submit" class="btn btn-primary" id="btn-login">Login to BinBuddy</button>
             <p class="auth-foot-note">🔒 Sessions use signed tokens. Passwords stored hashed.</p>
+            <div class="auth-conn-tools" aria-label="Connection tools">
+              <button type="button" class="btn btn-ghost auth-conn-btn" id="btn-conn-check">Check connection</button>
+              <button type="button" class="btn btn-ghost auth-conn-btn" id="btn-conn-reset">Reset API link</button>
+              <p class="auth-conn-status" id="auth-conn-status" aria-live="polite"></p>
+            </div>
           </div>
         </form>
       </div>
@@ -937,6 +945,9 @@
 
 </div><!-- #app -->
 
+<!-- If the web UI is on a different host than the Node API, uncomment and set (must end with /api):
+<script>window.BINBUDDY_API_BASE = "https://your-api-host.example.com/api";</script>
+-->
 <script src="js/app.js"></script>
 <script>
   /* ---- Admin Chart Render ---- */

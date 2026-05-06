@@ -4,7 +4,115 @@
 
 const STORAGE_KEY = "binbuddy-state-v2";
 const SESSION_KEY = "binbuddy-session-v1";
-const API_BASE = (typeof window !== "undefined" && window.BINBUDDY_API_BASE) || "/api";
+const API_BASE_STORAGE_KEY = "binbuddy-api-base";
+/**
+ * Resolve the API base URL robustly so the browser always reaches the Node API (which writes to Aiven).
+ *
+ * Priority:
+ * 1) explicit override via `window.BINBUDDY_API_BASE`
+ * 2) persisted override via localStorage `binbuddy-api-base`
+ * 3) <meta name="binbuddy-api-base" content="...">
+ * 4) same-origin `/api`
+ * 5) `api.` subdomain (e.g. https://api.example.com/api)
+ */
+let resolvedApiBase = null;
+let resolvingApiBasePromise = null;
+
+function normalizeApiBase(raw) {
+  const s = String(raw || "").trim().replace(/\/+$/, "");
+  if (!s) return "";
+  return s.endsWith("/api") ? s : `${s}/api`;
+}
+
+function candidateApiBases() {
+  const list = [];
+  try {
+    const w = typeof window !== "undefined" ? window : null;
+    if (!w) return ["/api"];
+    const explicit = normalizeApiBase(w.BINBUDDY_API_BASE);
+    if (explicit) list.push(explicit);
+    const stored = normalizeApiBase(w.localStorage?.getItem(API_BASE_STORAGE_KEY));
+    if (stored) list.push(stored);
+    const meta = w.document?.querySelector?.('meta[name="binbuddy-api-base"]')?.getAttribute?.("content");
+    const metaNorm = normalizeApiBase(meta);
+    if (metaNorm) list.push(metaNorm);
+
+    // same-origin
+    const origin = String(w.location?.origin || "").trim();
+    if (origin) list.push(`${origin}/api`);
+
+    // api. subdomain
+    const host = String(w.location?.hostname || "").trim();
+    const proto = String(w.location?.protocol || "https:").trim();
+    if (host && !host.startsWith("api.")) {
+      list.push(`${proto}//api.${host}/api`);
+    }
+  } catch (_e) {
+    // ignore
+  }
+  list.push("/api");
+
+  // de-dupe while preserving order
+  const seen = new Set();
+  return list.filter(x => (x && !seen.has(x) ? (seen.add(x), true) : false));
+}
+
+async function probeApiBase(base) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 6500);
+  try {
+    const res = await fetch(`${base}/health`, { signal: ctrl.signal, headers: { Accept: "application/json" } });
+    if (!res.ok) return false;
+    const ct = String(res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) return false;
+    const data = await res.json().catch(() => ({}));
+    return Boolean(data && (data.ok === true || data.success === true));
+  } catch (_e) {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function getApiBase() {
+  if (resolvedApiBase) return resolvedApiBase;
+  if (resolvingApiBasePromise) return resolvingApiBasePromise;
+  resolvingApiBasePromise = (async () => {
+    const candidates = candidateApiBases();
+    for (const c of candidates) {
+      if (await probeApiBase(c)) {
+        resolvedApiBase = c;
+        return resolvedApiBase;
+      }
+    }
+    // If none respond, fall back to the first candidate (most likely correct) and surface a useful error later.
+    resolvedApiBase = candidates[0] || "/api";
+    return resolvedApiBase;
+  })();
+  return resolvingApiBasePromise;
+}
+
+function setApiBaseOverride(baseUrl) {
+  try {
+    const b = normalizeApiBase(baseUrl);
+    if (!b) {
+      localStorage.removeItem(API_BASE_STORAGE_KEY);
+      resolvedApiBase = null;
+      resolvingApiBasePromise = null;
+      return true;
+    }
+    localStorage.setItem(API_BASE_STORAGE_KEY, b);
+    resolvedApiBase = b;
+    resolvingApiBasePromise = null;
+    return true;
+  } catch (_e) {
+    return false;
+  }
+}
+
+// Expose for ops/support: run `setApiBaseOverride("https://your-api-host")` in the console.
+if (typeof window !== "undefined") window.setApiBaseOverride = setApiBaseOverride;
+
 const TOKEN_KEY = "binbuddy-jwt";
 
 /** Align with server `passwordPolicy`: 8–128 chars, letters + numbers. */
@@ -618,19 +726,46 @@ function clearToken() {
 }
 
 async function apiFetch(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const timeoutMs = options.timeoutMs != null ? Number(options.timeoutMs) : 25000;
+  const { timeoutMs: _omit, ...fetchOpts } = options;
+  const headers = { "Content-Type": "application/json", ...(fetchOpts.headers || {}) };
   const tok = getToken();
   if (tok) headers.Authorization = `Bearer ${tok}`;
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const detail = summarizeApiValidationMessage(data) || data.message;
-    const err = new Error(detail || res.statusText || "Request failed");
-    err.status = res.status;
-    err.data = data;
-    throw err;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const base = await getApiBase();
+    const res = await fetch(`${base}${path}`, { ...fetchOpts, headers, signal: ctrl.signal });
+    const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+    const isJson = contentType.includes("application/json");
+    const data = isJson ? await res.json().catch(() => ({})) : {};
+    if (!res.ok) {
+      const detail = summarizeApiValidationMessage(data) || data.message;
+      const err = new Error(detail || res.statusText || "Request failed");
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    if (!isJson) {
+      const err = new Error(
+        "BinBuddy API is not reachable from this page. If UI and API are on different hosts, set BINBUDDY_API_BASE (or call setApiBaseOverride(...)) to your Node API base URL."
+      );
+      err.status = res.status || 0;
+      err.code = "BAD_API_RESPONSE";
+      throw err;
+    }
+    return data;
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      const err = new Error("Request timed out. Check that the BinBuddy server is running and reachable.");
+      err.status = 0;
+      err.code = "TIMEOUT";
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
   }
-  return data;
 }
 
 async function syncFromServer() {
@@ -761,11 +896,45 @@ async function syncFromServer() {
   } catch (e) {
     console.warn(e);
     apiMode = false;
-    clearToken();
-    clearSession();
-    if (typeof clearRuntimeUserContext === "function") clearRuntimeUserContext();
+    const status = e && typeof e.status === "number" ? e.status : null;
+    if (status === 401 || status === 403) {
+      clearToken();
+      clearSession();
+      if (typeof clearRuntimeUserContext === "function") clearRuntimeUserContext();
+    }
     return false;
   }
+}
+
+/** When the server accepted auth but full sync failed (network/503), keep the JWT and mirror API user into AppState so the UI can load. */
+function applySessionFromAuthUser(user) {
+  if (!user || user.id == null) return;
+  AppState.currentUserId = user.id;
+  AppState.currentUserName = user.name || user.email || "User";
+  AppState.role = normalizeRole(user.role);
+  const local = {
+    id: user.id,
+    name: user.name || user.email || "User",
+    email: user.email || "",
+    phoneNumber: user.phoneNumber || "",
+    address: user.address || "",
+    gender: user.gender || "",
+    role: user.role,
+    ecoPoints: Number(user.ecoPoints) || 0,
+    streak: Number(user.streak) || 0,
+    badge: user.badge || "Eco Starter",
+    barangay: user.barangay || "Holy Spirit",
+    password: ""
+  };
+  AppState.users = [local];
+  AppState.logs = [];
+  AppState.notifications = [];
+  SessionManager.save({
+    currentUserId: AppState.currentUserId,
+    role: normalizeRole(AppState.role),
+    name: AppState.currentUserName
+  });
+  apiMode = true;
 }
 
 function updateHomeStats() {
@@ -1359,6 +1528,68 @@ function initDashboardBackButtons() {
   });
 }
 
+function navGoBack() {
+  const user = AuthService.currentUser();
+  if (!user) return;
+  const home = RoleGuard.getHomeScreen(normalizeRole(user.role));
+  if (navStack.length === 0) {
+    goTo(home, { trackHistory: false, skipAuthenticatedHistory: true, skipNavStack: true });
+    return;
+  }
+  const entry = navStack.pop();
+  const prev = entry?.screen;
+  if (!prev || !RoleGuard.canAccess(user.role, prev)) {
+    goTo(home, { trackHistory: false, skipAuthenticatedHistory: true, skipNavStack: true });
+    return;
+  }
+  const opts = {
+    trackHistory: false,
+    skipAuthenticatedHistory: true,
+    skipNavStack: true
+  };
+  if (prev === "track" && entry.trackSubView === "history") opts.trackSubView = "history";
+  goTo(prev, opts);
+}
+
+function initDashboardBackButtons() {
+  const dash = document.getElementById("mount-dashboard-phase");
+  if (!dash) return;
+  dash.querySelectorAll("section.screen").forEach(section => {
+    if (
+      section.id === "screen-home" ||
+      section.id === "screen-collector" ||
+      section.id === "screen-collector-history"
+    )
+      return;
+    if (section.querySelector(".page-back-btn")) return;
+    const profileIds = new Set(["screen-profile", "screen-collector-profile", "screen-admin-profile"]);
+    if (profileIds.has(section.id)) {
+      const hero = section.querySelector(".profile-hero");
+      if (!hero) return;
+      const row = document.createElement("div");
+      row.className = "profile-back-row";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "page-back-btn page-back-btn--profile";
+      btn.textContent = "← Back";
+      btn.setAttribute("aria-label", "Go back");
+      btn.addEventListener("click", () => navGoBack());
+      row.appendChild(btn);
+      section.insertBefore(row, hero);
+      return;
+    }
+    const ph = section.querySelector(".page-header");
+    if (!ph) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "page-back-btn";
+    btn.textContent = "← Back";
+    btn.setAttribute("aria-label", "Go back");
+    btn.addEventListener("click", () => navGoBack());
+    ph.insertBefore(btn, ph.firstChild);
+  });
+}
+
 function syncBottomNav(user, screen) {
   const role = user ? normalizeRole(user.role) : null;
   const header = document.getElementById("top-nav");
@@ -1388,7 +1619,7 @@ function showToast(message) {
 
 function openLogModal() {
   const user = AuthService.currentUser();
-  if (!user || user.role !== "household") {
+  if (!user || normalizeRole(user.role) !== "household") {
     showToast("Household login required.");
     return;
   }
@@ -1509,7 +1740,7 @@ function cancelLogSubmission() {
 
 async function submitLog() {
   const user = AuthService.currentUser();
-  if (!user || user.role !== "household") {
+  if (!user || normalizeRole(user.role) !== "household") {
     showToast("Only household users can submit logs.");
     return;
   }
@@ -1635,7 +1866,7 @@ function renderNotifications() {
 
 function renderLeaderboard() {
   const users = AppState.users
-    .filter(u => u.role === "household")
+    .filter(u => normalizeRole(u.role) === "household")
     .slice()
     .sort((a, b) => b.ecoPoints - a.ecoPoints)
     .slice(0, 10);
@@ -1754,7 +1985,7 @@ function renderCollectorView() {
 
 async function handleCollectorDecision(logId, isVerified) {
   const user = AuthService.currentUser();
-  if (!user || user.role !== "collector") {
+  if (!user || normalizeRole(user.role) !== "collector") {
     showToast("Collector login required.");
     return;
   }
@@ -1841,8 +2072,13 @@ function renderAdminAnalytics() {
         .map(
           u => `
       <div class="card" style="display:flex;justify-content:space-between">
-        <span>#${u.rank} ${u.name}</span>
-        <strong>${u.ecoPoints} pts</strong>
+        <span>
+          <strong>#${u.rank ?? "—"}</strong> ${u.name || "—"}<br/>
+          <small style="color:var(--text-muted)">
+            ${u.email ? u.email : ""}${u.barangay ? (u.email ? " · " : "") + u.barangay : ""}
+          </small>
+        </span>
+        <strong>${Number(u.ecoPoints ?? u.pts ?? 0)} pts</strong>
       </div>
     `
         )
@@ -1873,7 +2109,7 @@ function renderAdminAnalytics() {
   if (kpis[0]) kpis[0].textContent = `${metrics.totalCollectedKg}kg`;
   if (kpis[1]) kpis[1].textContent = `${metrics.compliance}%`;
   if (kpis[2]) kpis[2].textContent = `${metrics.completedLogs}`;
-  if (kpis[3]) kpis[3].textContent = `${AppState.users.filter(u => u.role === "household").length}`;
+  if (kpis[3]) kpis[3].textContent = `${AppState.users.filter(u => normalizeRole(u.role) === "household").length}`;
 
   const pointsNodeLocal =
     document.querySelector("#screen-admin .card.mb-12 .section-title + div") ||
@@ -1883,7 +2119,7 @@ function renderAdminAnalytics() {
   const adminUsers = document.getElementById("admin-users");
   if (adminUsers) {
     const ranked = AppState.users
-      .filter(u => u.role === "household")
+      .filter(u => normalizeRole(u.role) === "household")
       .slice()
       .sort((a, b) => b.ecoPoints - a.ecoPoints)
       .slice(0, 5);
@@ -2243,7 +2479,7 @@ function initRewards() {
 
 async function redeemReward(rewardId) {
   const user = AuthService.currentUser();
-  if (!user || user.role !== "household") {
+  if (!user || normalizeRole(user.role) !== "household") {
     showToast("Only household users can redeem rewards.");
     return;
   }
@@ -2278,6 +2514,9 @@ function initAuth() {
   const roleCards = document.querySelectorAll(".role-card");
   const authPrimaryButton = document.getElementById("btn-login");
   const screenAuth = document.getElementById("screen-auth");
+  const connCheckBtn = document.getElementById("btn-conn-check");
+  const connResetBtn = document.getElementById("btn-conn-reset");
+  const connStatus = document.getElementById("auth-conn-status");
   const emailInput = document.getElementById("auth-email");
   const passwordInput = document.getElementById("auth-password");
   const passwordToggleBtn = document.getElementById("auth-password-toggle");
@@ -2289,6 +2528,22 @@ function initAuth() {
   const phoneError = document.getElementById("auth-phone-number-error");
   const addressError = document.getElementById("auth-address-error");
   const genderError = document.getElementById("auth-gender-error");
+  let authSubmitInFlight = false;
+
+  const defaultSubmitLabel = () =>
+    AppState.authMode === "register" ? "Create BinBuddy Account" : "Login to BinBuddy";
+
+  const setAuthSubmitBusy = (busy, mode = AppState.authMode) => {
+    const b = Boolean(busy);
+    if (!authPrimaryButton) return;
+    authPrimaryButton.disabled = b;
+    authPrimaryButton.setAttribute("aria-busy", b ? "true" : "false");
+    authPrimaryButton.textContent = b
+      ? mode === "register"
+        ? "Creating account…"
+        : "Signing in…"
+      : defaultSubmitLabel();
+  };
 
   const setFieldError = (inputEl, errorEl, message) => {
     if (!inputEl || !errorEl) return;
@@ -2334,6 +2589,47 @@ function initAuth() {
   clearInlineErrors();
   syncAuthModeChrome();
 
+  const setConnStatus = (msg) => {
+    if (!connStatus) return;
+    connStatus.textContent = msg ? String(msg) : "";
+  };
+
+  const checkConnection = async () => {
+    if (authSubmitInFlight) return;
+    setConnStatus("Checking connection…");
+    try {
+      const base = await getApiBase();
+      const health = await apiFetch("/health", { method: "GET", timeoutMs: 12000 });
+      const ok = Boolean(health?.dbConnected);
+      setConnStatus(ok ? `Connected ✅ (DB ping ${health.dbPingMs ?? "?"}ms)` : `API ok, DB offline ❌ (${health.dbError || "unavailable"})`);
+      showToast(ok ? "Connected to server + database." : "Server reachable but database is offline.");
+      return;
+    } catch (e) {
+      const msg = e?.message || "Connection failed.";
+      setConnStatus(`Offline ❌ (${msg})`);
+      showToast(msg);
+    }
+  };
+
+  const resetApiLink = async () => {
+    setConnStatus("Resetting API link…");
+    try {
+      setApiBaseOverride("");
+      resolvedApiBase = null;
+      resolvingApiBasePromise = null;
+      clearToken();
+      SessionManager.clear();
+      apiMode = false;
+      setConnStatus("API link reset. Re-checking…");
+      await checkConnection();
+    } catch (e) {
+      setConnStatus("Could not reset API link.");
+    }
+  };
+
+  connCheckBtn?.addEventListener("click", () => void checkConnection());
+  connResetBtn?.addEventListener("click", () => void resetApiLink());
+
   emailInput?.addEventListener("input", () => setFieldError(emailInput, emailError, ""));
   passwordInput?.addEventListener("input", () => setFieldError(passwordInput, passwordError, ""));
   phoneInput?.addEventListener("input", () => setFieldError(phoneInput, phoneError, ""));
@@ -2361,9 +2657,7 @@ function initAuth() {
       AppState.authMode = idx === 1 ? "register" : "login";
       syncAuthModeChrome();
       clearInlineErrors();
-      if (authPrimaryButton) {
-        authPrimaryButton.textContent = AppState.authMode === "register" ? "Create BinBuddy Account" : "Login to BinBuddy";
-      }
+      if (authPrimaryButton && !authSubmitInFlight) authPrimaryButton.textContent = defaultSubmitLabel();
     });
   });
 
@@ -2379,7 +2673,9 @@ function initAuth() {
   });
 
   const submitAuth = async () => {
+    if (authSubmitInFlight) return;
     clearInlineErrors();
+    const submitMode = AppState.authMode === "register" ? "register" : "login";
     const email = (emailInput ? emailInput.value : "").trim();
     const password = passwordInput ? passwordInput.value : "";
     const phoneNumber = (phoneInput ? phoneInput.value : "").trim();
@@ -2397,12 +2693,12 @@ function initAuth() {
     }
 
     const loginPwErr = validateLoginPasswordPresence(password);
-    if (loginPwErr && AppState.authMode === "login") {
+    if (loginPwErr && submitMode === "login") {
       setFieldError(passwordInput, passwordError, loginPwErr);
       passwordInput?.focus();
       return;
     }
-    if (AppState.authMode === "register") {
+    if (submitMode === "register") {
       const phoneValidationError = validateRegisterPhoneClient(phoneNumber);
       if (phoneValidationError) {
         setFieldError(phoneInput, phoneError, phoneValidationError);
@@ -2429,9 +2725,23 @@ function initAuth() {
       }
     }
 
-    if (AppState.authMode === "register") {
+    // Safety watchdog: never leave the button stuck forever.
+    let watchdog = null;
+    const armWatchdog = () => {
+      if (watchdog) window.clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => {
+        authSubmitInFlight = false;
+        setAuthSubmitBusy(false, submitMode);
+        showToast("Request took too long. Please try again (check connection).");
+      }, 30000);
+    };
+
+    if (submitMode === "register") {
       const registrationRole = selectedRegisterRole();
       const displayName = sanitizeRegisterName(email);
+      authSubmitInFlight = true;
+      setAuthSubmitBusy(true, submitMode);
+      armWatchdog();
       try {
         const reg = await apiFetch("/auth/register", {
           method: "POST",
@@ -2446,10 +2756,19 @@ function initAuth() {
           })
         });
         setToken(reg.token);
-        await syncFromServer();
+        const synced = await syncFromServer();
+        if (!synced) {
+          if (!getToken()) {
+            showToast("Account may have been created but the session is invalid. Try logging in.");
+            return;
+          }
+          applySessionFromAuthUser(reg.user);
+          showToast("Welcome! Connected — some data will refresh when the server is available.");
+        } else {
+          showToast(`Welcome, ${reg.user.name}`);
+        }
         const regHome = getRoleHomeScreen(reg.user.role);
         finalizeAuthenticatedEntry(regHome, { replaceHistory: true });
-        showToast(`Welcome, ${reg.user.name}`);
         return;
       } catch (e) {
         console.warn("[auth] register rejected or api failed — check server logs.", e?.message || e, e?.data || "");
@@ -2474,9 +2793,16 @@ function initAuth() {
         finalizeAuthenticatedEntry(getRoleHomeScreen(locLogin.user.role), { replaceHistory: true });
         showToast(`Welcome, ${locLogin.user.name}`);
         return;
+      } finally {
+        if (watchdog) window.clearTimeout(watchdog);
+        authSubmitInFlight = false;
+        setAuthSubmitBusy(false, submitMode);
       }
     }
 
+    authSubmitInFlight = true;
+    setAuthSubmitBusy(true, submitMode);
+    armWatchdog();
     try {
       const login = await apiFetch("/auth/login", {
         method: "POST",
@@ -2486,10 +2812,20 @@ function initAuth() {
         })
       });
       setToken(login.token);
-      await syncFromServer();
+      const synced = await syncFromServer();
+      if (!synced) {
+        if (!getToken()) {
+          setFieldError(passwordInput, passwordError, "Login failed. Session could not be established.");
+          showToast("Login failed. Please try again.");
+          return;
+        }
+        applySessionFromAuthUser(login.user);
+        showToast("Signed in — loading full data when the connection is ready.");
+      } else {
+        showToast(`Welcome, ${login.user.name}`);
+      }
       const targetScreen = getRoleHomeScreen(login.user.role);
       finalizeAuthenticatedEntry(targetScreen, { replaceHistory: true });
-      showToast(`Welcome, ${login.user.name}`);
       return;
     } catch (e) {
       const loginFallback = AuthService.login({ email, password });
@@ -2501,21 +2837,280 @@ function initAuth() {
       const targetScreen = getRoleHomeScreen(loginFallback.user.role);
       finalizeAuthenticatedEntry(targetScreen, { replaceHistory: true });
       showToast(`Welcome, ${loginFallback.user.name}`);
+    } finally {
+      if (watchdog) window.clearTimeout(watchdog);
+      authSubmitInFlight = false;
+      setAuthSubmitBusy(false, submitMode);
     }
   };
 
   authForm?.addEventListener("submit", ev => {
     ev.preventDefault();
-    submitAuth();
+    void submitAuth();
   });
 
   if (loginBtn) {
     loginBtn.addEventListener("click", ev => {
       ev.preventDefault();
-      submitAuth();
+      void submitAuth();
     });
   }
 
+  window.__binbuddyAuthInitialized = true;
+
+}
+
+function bindEmergencyAuthFallback() {
+  if (window.__binbuddyAuthInitialized) return;
+  const authForm = document.getElementById("auth-form");
+  const tabs = document.querySelectorAll(".auth-tab");
+  const screenAuth = document.getElementById("screen-auth");
+  const submitBtn = document.getElementById("btn-login");
+  const emailInput = document.getElementById("auth-email");
+  const passwordInput = document.getElementById("auth-password");
+  const phoneInput = document.getElementById("auth-phone-number");
+  const addressInput = document.getElementById("auth-address");
+  const genderInput = document.getElementById("auth-gender");
+  const roleCards = document.querySelectorAll(".role-card");
+
+  let authBusy = false;
+  const labelForMode = () =>
+    AppState.authMode === "register" ? "Create BinBuddy Account" : "Login to BinBuddy";
+  const setBusy = busy => {
+    authBusy = Boolean(busy);
+    if (!submitBtn) return;
+    submitBtn.disabled = authBusy;
+    submitBtn.setAttribute("aria-busy", authBusy ? "true" : "false");
+    submitBtn.textContent = authBusy
+      ? AppState.authMode === "register"
+        ? "Creating account…"
+        : "Signing in…"
+      : labelForMode();
+  };
+
+  const setMode = (mode) => {
+    AppState.authMode = mode === "register" ? "register" : "login";
+    if (screenAuth) screenAuth.classList.toggle("auth-mode-register", AppState.authMode === "register");
+    if (tabs[0]) tabs[0].classList.toggle("active", AppState.authMode === "login");
+    if (tabs[1]) tabs[1].classList.toggle("active", AppState.authMode === "register");
+    if (submitBtn && !authBusy) submitBtn.textContent = labelForMode();
+  };
+
+  tabs[0]?.addEventListener("click", () => setMode("login"));
+  tabs[1]?.addEventListener("click", () => setMode("register"));
+  roleCards.forEach((card) => {
+    card.addEventListener("click", () => {
+      roleCards.forEach(c => c.classList.remove("selected"));
+      card.classList.add("selected");
+      AppState.role = normalizeRole(card.dataset.role);
+    });
+  });
+
+  authForm?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (authBusy) return;
+    const email = String(emailInput?.value || "").trim();
+    const password = String(passwordInput?.value || "");
+    const role = normalizeRole(AppState.role);
+    if (!email || !password) {
+      showToast("Email and password are required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      let resolvedRole = role;
+      let welcomeMsg = "Welcome to BinBuddy.";
+      if (AppState.authMode === "register") {
+        const payload = {
+          email,
+          password,
+          name: sanitizeRegisterName(email),
+          role,
+          phoneNumber: String(phoneInput?.value || "").trim(),
+          address: String(addressInput?.value || "").trim(),
+          gender: String(genderInput?.value || "").trim().toLowerCase()
+        };
+        const reg = await apiFetch("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+        setToken(reg.token);
+        resolvedRole = normalizeRole(reg.user?.role || role);
+        const synced = await syncFromServer();
+        if (!synced) {
+          if (!getToken()) {
+            showToast("Account may have been created but the session is invalid. Try logging in.");
+            return;
+          }
+          applySessionFromAuthUser(reg.user);
+          welcomeMsg = "Welcome! Some data will refresh when the server is available.";
+        } else {
+          welcomeMsg = `Welcome, ${reg.user?.name || "BinBuddy"}.`;
+        }
+      } else {
+        const login = await apiFetch("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password, role })
+        });
+        setToken(login.token);
+        resolvedRole = normalizeRole(login.user?.role || role);
+        const synced = await syncFromServer();
+        if (!synced) {
+          if (!getToken()) {
+            showToast("Login failed. Please try again.");
+            return;
+          }
+          applySessionFromAuthUser(login.user);
+          welcomeMsg = "Signed in — full data will load when the connection is ready.";
+        } else {
+          welcomeMsg = `Welcome, ${login.user?.name || "BinBuddy"}.`;
+        }
+      }
+      finalizeAuthenticatedEntry(getRoleHomeScreen(AuthService.currentUser()?.role || resolvedRole), { replaceHistory: true });
+      showToast(welcomeMsg);
+    } catch (err) {
+      showToast(err?.message || "Authentication failed.");
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  setMode("login");
+}
+
+function downloadLocalWasteLogsCsv() {
+  const header = "log_code,user_id,user_name,type,weight,status,points,created_at\n";
+  const lines = AppState.logs.map(l =>
+    `${l.id},${l.userId},"${String(l.userName || "").replace(/"/g, '""')}",${l.type},${l.weight},${l.status},${l.ecoPointsAwarded || 0},${l.createdAt || ""}`
+  );
+  const blob = new Blob([header + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "binbuddy-waste-logs.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function adminBroadcastLocal(message) {
+  const households = AppState.users.filter(u => normalizeRole(u.role) === "household");
+  const text = `[Barangay broadcast] ${message}`;
+  households.forEach(h => {
+    AppState.notifications.unshift({
+      text,
+      createdAt: nowIso(),
+      userId: h.id
+    });
+  });
+  persistState();
+}
+
+function renderAdminToolsDetail(html) {
+  const el = document.getElementById("admin-tools-detail");
+  if (el) el.innerHTML = html;
+}
+
+async function openAdminUsersTool() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") {
+    showToast("Admin access only.");
+    return;
+  }
+  if (apiMode && getToken()) {
+    try {
+      const data = await apiFetch("/admin/users");
+      AppState.users = (data.users || []).map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || "",
+        phoneNumber: u.phoneNumber || "",
+        address: u.address || "",
+        gender: u.gender || "",
+        role: u.role,
+        ecoPoints: Number(u.ecoPoints) || 0,
+        streak: Number(u.streak) || 0,
+        badge: u.badge || "",
+        barangay: u.barangay || "",
+        password: ""
+      }));
+    } catch (e) {
+      showToast(e.message || "Could not load users.");
+      return;
+    }
+  }
+  const rows = AppState.users.slice().sort((a, b) => String(a.role).localeCompare(String(b.role)));
+  renderAdminToolsDetail(`
+    <div class="card">
+      <div class="section-title">👥 Users (${rows.length})</div>
+      ${rows
+        .map(
+          u => `
+      <div class="card card-sm" style="margin-bottom:8px">
+        <strong>${u.name}</strong> · ${u.id} · ${u.role}<br/>
+        <small>${u.email || "—"} · ${getUserBarangayLabel(u)} · ${u.ecoPoints ?? 0} pts</small>
+      </div>`
+        )
+        .join("")}
+    </div>`);
+}
+
+async function openAdminReportTool() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") {
+    showToast("Admin access only.");
+    return;
+  }
+  if (apiMode && getToken()) {
+    try {
+      const rep = await apiFetch("/admin/report");
+      const m = rep.metrics || {};
+      const byStatus = rep.logsByStatus || {};
+      const recent = rep.recentLogs || [];
+      renderAdminToolsDetail(`
+        <div class="card">
+          <div class="section-title">📋 Full report</div>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px">
+            Total logs: ${m.totalLogs ?? "—"} · Completed: ${m.completedLogs ?? "—"} · Pending: ${m.pendingLogs ?? "—"} · Rejected: ${m.rejectedLogs ?? "—"} · Compliance: ${m.compliance ?? "—"}%
+          </p>
+          <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">By status: ${Object.entries(byStatus)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(" · ") || "—"}</div>
+          <div class="section-title" style="margin-top:12px">Recent activity</div>
+          ${recent
+            .slice(0, 20)
+            .map(
+              r => `
+          <div class="card card-sm" style="margin-bottom:8px">
+            <strong>${r.logCode}</strong> · ${r.householdName} · ${r.wasteType} · ${r.weight} kg<br/>
+            <small>${r.status}${r.verifierCode ? ` · Verifier ${r.verifierCode}` : ""} · ${formatDateTime(r.createdAt)}</small>
+          </div>`
+            )
+            .join("")}
+        </div>`);
+      return;
+    } catch (e) {
+      showToast(e.message || "Could not load report.");
+      return;
+    }
+  }
+  const m = AnalyticsService.metrics();
+  renderAdminToolsDetail(`
+    <div class="card">
+      <div class="section-title">📋 Full report (local)</div>
+      <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px">
+        Total logs: ${m.totalLogs} · Completed: ${m.completedLogs} · Pending: ${m.pendingLogs} · Not segregated: ${m.rejectedLogs ?? 0} · Compliance: ${m.compliance}%
+      </p>
+      <div class="section-title" style="margin-top:12px">All logs</div>
+      ${AppState.logs
+        .slice()
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        .slice(0, 40)
+        .map(
+          l => `
+      <div class="card card-sm" style="margin-bottom:8px">
+        <strong>${l.id}</strong> · ${l.userName} · ${l.type} · ${l.weight} kg<br/>
+        <small>${l.status}${l.verifiedBy ? ` · ${l.verifiedBy}` : ""} · ${formatDateTime(l.createdAt)}</small>
+      </div>`
+        )
+        .join("")}
+    </div>`);
 }
 
 function downloadLocalWasteLogsCsv() {
@@ -2660,13 +3255,14 @@ function initAdminActions() {
   const exportBtn = document.getElementById("btn-export");
   exportBtn?.addEventListener("click", async () => {
     const user = AuthService.currentUser();
-    if (!user || user.role !== "admin") {
+    if (!user || normalizeRole(user.role) !== "admin") {
       showToast("Admin access only.");
       return;
     }
     if (apiMode && getToken()) {
       try {
-        const res = await fetch(`${API_BASE}/admin/export.csv`, {
+        const base = await getApiBase();
+        const res = await fetch(`${base}/admin/export.csv`, {
           headers: { Authorization: `Bearer ${getToken()}` }
         });
         if (!res.ok) throw new Error("Export failed.");
@@ -2755,6 +3351,43 @@ function initAdminActions() {
     }
     showToast("XML export requires server mode.");
   });
+
+  document.getElementById("btn-admin-users")?.addEventListener("click", () => openAdminUsersTool());
+
+  document.getElementById("btn-admin-broadcast")?.addEventListener("click", async () => {
+    const user = AuthService.currentUser();
+    if (!user || normalizeRole(user.role) !== "admin") {
+      showToast("Admin access only.");
+      return;
+    }
+    const msg = window.prompt("Broadcast message to all households:");
+    if (msg == null) return;
+    const trimmed = String(msg).trim();
+    if (!trimmed) {
+      showToast("Message required.");
+      return;
+    }
+    if (apiMode && getToken()) {
+      try {
+        const res = await apiFetch("/admin/broadcast", {
+          method: "POST",
+          body: JSON.stringify({ message: trimmed })
+        });
+        showToast(`Broadcast sent to ${res.recipients ?? 0} households.`);
+        await syncFromServer();
+        refreshUI();
+        return;
+      } catch (e) {
+        showToast(e.message || "Broadcast failed.");
+        return;
+      }
+    }
+    adminBroadcastLocal(trimmed);
+    showToast(`Broadcast sent to ${AppState.users.filter(u => normalizeRole(u.role) === "household").length} households.`);
+    refreshUI();
+  });
+
+  document.getElementById("btn-admin-report")?.addEventListener("click", () => openAdminReportTool());
 }
 
 function initNavigation() {
@@ -2808,7 +3441,7 @@ function initNavigation() {
   if (submitBtn) {
     submitBtn.addEventListener("click", async () => {
       const user = AuthService.currentUser();
-      if (!user || user.role !== "household") {
+      if (!user || normalizeRole(user.role) !== "household") {
         showToast("Only household users can submit logs.");
         return;
       }
@@ -2932,16 +3565,29 @@ function goToAuthScreen(refresh = true) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  loadState();
-  loadSession();
-  HistoryGuard.init();
+  const safeInit = (label, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`[init:${label}]`, err);
+    }
+  };
+
+  safeInit("loadState", () => loadState());
+  safeInit("loadSession", () => loadSession());
+  safeInit("historyGuard", () => HistoryGuard.init());
 
   let restored = false;
   if (getToken()) {
-    restored = await syncFromServer();
+    try {
+      restored = await syncFromServer();
+    } catch (err) {
+      console.error("[init:syncFromServer]", err);
+      restored = false;
+    }
   }
 
-  runInitialUrlRouting(restored);
+  safeInit("runInitialUrlRouting", () => runInitialUrlRouting(restored));
 
   initSplash(restored);
   setupWasteTypeSelectors();
