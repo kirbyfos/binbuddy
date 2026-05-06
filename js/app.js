@@ -206,15 +206,27 @@ function userBarangayRankKey(user) {
     .trim();
 }
 
+function isLogStatusCompleted(status) {
+  return String(status || "").toLowerCase() === "completed";
+}
+
 function completedVerifiedDisposalCount(userId) {
-  const uid = String(userId);
-  return AppState.logs.filter(l => String(l.userId) === uid && l.status === "Completed").length;
+  const sid = userId != null ? String(userId) : "";
+  const row = AppState.users.find(u => String(u.id) === sid);
+  if (row && Object.prototype.hasOwnProperty.call(row, "completedDisposals")) {
+    return Number(row.completedDisposals) || 0;
+  }
+  return AppState.logs.filter(l => String(l.userId) === sid && isLogStatusCompleted(l.status)).length;
 }
 
 function completedVerifiedDisposalKg(userId) {
-  const uid = String(userId);
+  const sid = userId != null ? String(userId) : "";
+  const row = AppState.users.find(u => String(u.id) === sid);
+  if (row && Object.prototype.hasOwnProperty.call(row, "completedKg")) {
+    return Number(row.completedKg) || 0;
+  }
   return AppState.logs
-    .filter(l => String(l.userId) === uid && l.status === "Completed")
+    .filter(l => String(l.userId) === sid && isLogStatusCompleted(l.status))
     .reduce((sum, l) => sum + (Number(l.weight) || 0), 0);
 }
 
@@ -253,7 +265,7 @@ function computeHouseholdDisposalRank(user) {
       const prev = rows[i - 1];
       if (cur.count !== prev.count || cur.kg !== prev.kg || cur.pts !== prev.pts) assignedRank = i + 1;
     }
-    if (rows[i].id === myId) {
+    if (String(rows[i].id) === myId) {
       myRank = assignedRank;
       myCount = rows[i].count;
     }
@@ -800,7 +812,14 @@ async function syncFromServer() {
       const lb = await apiFetch("/leaderboard");
       const rows = lb.leaderboard || [];
       const myIdStr = String(user.id);
-      /** Single source of truth for the signed-in account (never leaderboard merge). */
+      const myLb = rows.find(r => String(r.id) === myIdStr);
+
+      /** Disposal totals for me when API omits top-50 snapshot (fallback: my `/logs`). */
+      const myLogsFiltered = AppState.logs.filter(
+        l => String(l.userId) === myIdStr && isLogStatusCompleted(l.status)
+      );
+
+      /** Single source of truth for EcoPoints/streak/contact; disposal stats prefer leaderboard row or local logs. */
       const meRow = {
         id: user.id,
         name: user.name || user.email || "User",
@@ -813,7 +832,13 @@ async function syncFromServer() {
         streak: Number(user.streak) || 0,
         badge: user.badge || "Eco Starter",
         barangay: user.barangay || "Holy Spirit",
-        password: ""
+        password: "",
+        completedDisposals: myLb
+          ? Number(myLb.completedDisposals) || 0
+          : myLogsFiltered.length,
+        completedKg: myLb
+          ? Number(myLb.completedKg) || 0
+          : myLogsFiltered.reduce((s, l) => s + (Number(l.weight) || 0), 0)
       };
       const others = rows
         .filter(r => String(r.id) !== myIdStr)
@@ -828,8 +853,10 @@ async function syncFromServer() {
           ecoPoints: Number(r.ecoPoints) || 0,
           streak: 0,
           badge: "Eco Starter",
-          barangay: "",
-          password: ""
+          barangay: r.barangay != null ? String(r.barangay) : "",
+          password: "",
+          completedDisposals: Number(r.completedDisposals) || 0,
+          completedKg: Number(r.completedKg) || 0
         }));
       AppState.users = [meRow, ...others];
     } else {
@@ -1866,32 +1893,44 @@ function renderNotifications() {
   }
 }
 
+/** Dense ranking by EcoPoints: ties share a rank (1, 1, 2 …). */
+function assignEcoPointsCompetitionRank(sortedHouseholds) {
+  let rank = 1;
+  return sortedHouseholds.map((u, i) => {
+    const pts = Number(u.ecoPoints) || 0;
+    if (i > 0 && pts !== (Number(sortedHouseholds[i - 1].ecoPoints) || 0)) rank += 1;
+    return { ...u, ecoPoints: pts, ecoRank: rank };
+  });
+}
+
 function renderLeaderboard() {
-  const users = AppState.users
+  const sorted = AppState.users
     .filter(u => normalizeRole(u.role) === "household")
     .slice()
-    .sort((a, b) => (Number(b.ecoPoints) || 0) - (Number(a.ecoPoints) || 0))
-    .slice(0, 10)
-    .map((u, i) => ({ ...u, rank: i + 1, ecoPoints: Number(u.ecoPoints) || 0 }));
+    .sort((a, b) => (Number(b.ecoPoints) || 0) - (Number(a.ecoPoints) || 0));
+
+  const ranked = assignEcoPointsCompetitionRank(sorted).slice(0, 10);
 
   const lists = Array.from(document.querySelectorAll("[data-leaderboard-list]"));
   if (!lists.length) return;
 
-  const html = users.length
-    ? users.map(u => `
-    <div class="card" style="display:flex;justify-content:space-between">
-      <span>
-        ${(() => {
-          const r = computeHouseholdDisposalRank(u);
-          const hasPoints = (Number(u.ecoPoints) || 0) > 0;
-          const hasVerified = (Number(r?.verifiedCount) || 0) > 0;
-          const isUnranked = !hasPoints && (!r || !hasVerified || r.rank == null);
-          return `${isUnranked ? "Unranked" : "#" + r.rank} ${u.name || "User"}`;
-        })()}
+  const html = ranked.length
+    ? ranked
+        .map(u => {
+          const disposals = completedVerifiedDisposalCount(u.id);
+          const kg = completedVerifiedDisposalKg(u.id);
+          return `
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <span style="min-width:0">
+        <strong>#${u.ecoRank}</strong> ${u.name || "User"}
+        <div style="font-size:0.78rem;color:var(--text-muted);margin-top:3px;line-height:1.25">
+          ${disposals} verified disposal${disposals === 1 ? "" : "s"} · ${Number(kg).toFixed(1)} kg
+        </div>
       </span>
-      <strong>${u.ecoPoints} pts</strong>
-    </div>
-  `).join("")
+      <strong style="flex-shrink:0">${u.ecoPoints} pts</strong>
+    </div>`;
+        })
+        .join("")
     : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No ranked households yet.</p>`;
 
   lists.forEach(el => {

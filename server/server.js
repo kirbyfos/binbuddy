@@ -570,9 +570,32 @@ app.get('/api/leaderboard', authRequired, requireDb, async (_req, res) => {
     try {
         const idCol = usersIdColumn();
         const [rows] = await pool.query(
-            `SELECT ${idCol} AS id, full_name AS name, eco_points AS ecoPoints FROM users WHERE role = 'household' ORDER BY eco_points DESC LIMIT 50`
+            `
+            SELECT
+              u.${idCol} AS id,
+              u.full_name AS name,
+              u.eco_points AS ecoPoints,
+              COALESCE(u.barangay, '') AS barangay,
+              COALESCE(SUM(CASE WHEN wl.status = 'Completed' THEN 1 ELSE 0 END), 0) AS completedDisposals,
+              COALESCE(SUM(CASE WHEN wl.status = 'Completed' THEN wl.weight ELSE 0 END), 0) AS completedKg
+            FROM users u
+            LEFT JOIN waste_logs wl ON wl.user_id = u.${idCol}
+            WHERE u.role = 'household'
+            GROUP BY u.${idCol}, u.full_name, u.eco_points, u.barangay
+            ORDER BY u.eco_points DESC
+            LIMIT 50
+        `
         );
-        return res.json({ leaderboard: rows.map((r) => ({ ...r, ecoPoints: Number(r.ecoPoints || 0) })) });
+        return res.json({
+            leaderboard: rows.map((r) => ({
+                id: r.id,
+                name: r.name,
+                barangay: r.barangay != null ? String(r.barangay) : '',
+                ecoPoints: Number(r.ecoPoints || 0),
+                completedDisposals: Number(r.completedDisposals ?? 0) || 0,
+                completedKg: Number(Number(r.completedKg ?? 0).toFixed(2))
+            }))
+        });
     } catch (_err) {
         return res.json({ leaderboard: [] });
     }
