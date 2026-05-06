@@ -648,7 +648,7 @@ const HELP_TOUR_STEPS_COLLECTOR = [
       "Use Unverified in the menu for the pickup queue, and Verified to see completed verifications this year. The same tabs appear on your Pickup queue screen."
   },
   {
-    icon: "✅",
+    icon: "🔍",
     title: "How to verify",
     desc:
       "Open each card, check household details and optional photo proof, then tap Verify. Cards leave Unverified after you verify—they move to Verified and History."
@@ -842,9 +842,9 @@ function collectorYearlyLogs(logs, year = new Date().getFullYear()) {
 function computeCollectorDashboardStats(logs) {
   const year = new Date().getFullYear();
   const y = collectorYearlyLogs(logs, year);
-  const verifiedOk = y.filter(l => l.status === "Completed").length;
+  const verifiedCount = y.filter(l => l.status === "Completed").length;
   const pending = y.filter(l => l.status === "Pending").length;
-  return { year, verifiedOk, pending };
+  return { year, verifiedCount, pending };
 }
 
 function sortedVerifiedLogsYear(logs, year = new Date().getFullYear()) {
@@ -904,9 +904,14 @@ function collectorProofMarkup(log) {
   return "";
 }
 
-async /** Human-readable verifier for log cards (API `verifiedByName`, else local users, else raw id). */
+/** Human-readable verifier for log cards (signed-in collector, API `verifiedByName`, AppState users, else id). */
 function wasteLogVerifierDisplayName(log) {
   if (!log || log.verifiedBy == null || log.verifiedBy === "") return "";
+  const cur = AuthService.currentUser();
+  if (cur && sameUserId(log.verifiedBy, cur.id)) {
+    const selfName = String(cur.name || cur.email || "").trim();
+    if (selfName) return selfName;
+  }
   const fromApi =
     log.verifiedByName != null && String(log.verifiedByName).trim() !== ""
       ? String(log.verifiedByName).trim()
@@ -914,7 +919,7 @@ function wasteLogVerifierDisplayName(log) {
   if (fromApi) return fromApi;
   const uid = log.verifiedBy;
   const u = (AppState.users || []).find(usr => sameUserId(usr.id, uid));
-  if (u && u.name) return u.name;
+  if (u && u.name) return String(u.name).trim();
   return String(uid);
 }
 
@@ -981,7 +986,7 @@ function renderCollectorProfileShell() {
   const year = new Date().getFullYear();
   const mine = verifiedLogsHandledByCollector(AppState.logs, user.id, year);
   hist.innerHTML = mine.length
-    ? mine.map(l => htmlVerifiedLogCardReadOnly(l, { showVerifier: false })).join("")
+    ? mine.map(l => htmlVerifiedLogCardReadOnly(l, { showVerifier: true })).join("")
     : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No verified pickups assigned to you for ${year} yet.</p>`;
 }
 
@@ -1626,13 +1631,23 @@ const WasteLogService = {
 };
 
 const VerificationService = {
-  verifyLog(logId, isVerified, collectorId) {
+  verifyLog(logId, isVerified, collectorId, collectorDisplayName) {
     const log = AppState.logs.find(l => l.id === logId);
     if (!log) return null;
+    const verifierLabel = (() => {
+      const s = collectorDisplayName != null ? String(collectorDisplayName).trim() : "";
+      if (s) return s;
+      const cur = AuthService.currentUser();
+      if (cur && sameUserId(cur.id, collectorId)) {
+        return String(cur.name || cur.email || "").trim();
+      }
+      return "";
+    })();
     if (!isVerified) {
       if (log.status === "Completed") return log;
       log.status = "Rejected";
       log.verifiedBy = collectorId;
+      if (verifierLabel) log.verifiedByName = verifierLabel;
       log.completedAt = null;
       log.ecoPointsAwarded = 0;
       AppState.notifications.unshift({
@@ -1646,6 +1661,7 @@ const VerificationService = {
     if (log.status === "Completed") return log;
     log.status = "Completed";
     log.verifiedBy = collectorId;
+    if (verifierLabel) log.verifiedByName = verifierLabel;
     log.completedAt = nowIso();
     log.ecoPointsAwarded = Math.round(log.weight * (log.type === "PET" ? 20 : 25));
     const user = AppState.users.find(u => sameUserId(u.id, log.userId));
@@ -1714,31 +1730,69 @@ const AnalyticsService = {
     const completed = AppState.logs.filter(l => l.status === "Completed").length;
     const pending = AppState.logs.filter(l => l.status === "Pending").length;
     const rejected = AppState.logs.filter(l => l.status === "Rejected").length;
-    const totalCollectedKg = AppState.logs
+    const completedKg = AppState.logs
       .filter(l => l.status === "Completed")
-      .reduce((sum, l) => sum + l.weight, 0);
+      .reduce((sum, l) => sum + Number(l.weight) || 0, 0);
+    const allDecidedKg = AppState.logs
+      .filter(l => ["Completed", "Pending", "Rejected"].includes(l.status))
+      .reduce((sum, l) => sum + Number(l.weight) || 0, 0);
+    const recyclableCompletedKg = AppState.logs
+      .filter(l => l.status === "Completed" && ["PET", "HDPE"].includes(l.type))
+      .reduce((sum, l) => sum + Number(l.weight) || 0, 0);
     const decided = completed + pending + rejected;
     const compliance = decided > 0 ? Math.round((completed / decided) * 100) : 0;
+    const recyclingRate =
+      allDecidedKg > 0 ? Math.round((recyclableCompletedKg / allDecidedKg) * 100) : completedKg > 0 ? 100 : 0;
     const ecoPointsDistributed = AppState.logs.reduce((sum, l) => sum + (l.ecoPointsAwarded || 0), 0);
+    const activeUsers = (AppState.users || []).filter(u =>
+      ["household", "collector"].includes(normalizeRole(u.role))
+    ).length;
     return {
       totalLogs: total,
       completedLogs: completed,
       pendingLogs: pending,
       rejectedLogs: rejected,
-      totalCollectedKg: Number(totalCollectedKg.toFixed(1)),
+      totalCollectedKg: Number(completedKg.toFixed(1)),
       compliance,
-      ecoPointsDistributed
+      recyclingRate,
+      ecoPointsDistributed,
+      activeUsers
     };
   },
+  /** Last 7 calendar days — kg from completed pickups (prefer completedAt). */
   weeklySeries() {
-    const byDay = {};
+    const pad2 = n => String(n).padStart(2, "0");
+    const ymd = dt => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const buckets = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const key = ymd(d);
+      const label = d.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+      buckets.push({ key, label, val: 0 });
+    }
     AppState.logs.forEach(log => {
       if (log.status !== "Completed") return;
-      const day = new Date(log.createdAt).toLocaleDateString(undefined, { weekday: "short" });
-      byDay[day] = (byDay[day] || 0) + log.weight;
+      const iso = log.completedAt || log.createdAt;
+      if (!iso) return;
+      const t = new Date(iso);
+      if (Number.isNaN(t.getTime())) return;
+      const key = ymd(t);
+      const b = buckets.find(x => x.key === key);
+      if (b) b.val += Number(log.weight) || 0;
     });
-    const sequence = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    return sequence.map(day => ({ day, val: Number((byDay[day] || 0).toFixed(1)) }));
+    return buckets.map(({ label, val }) => ({ day: label, val: Number(val.toFixed(1)) }));
+  },
+  rollingWeekCaption() {
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+    start.setDate(end.getDate() - 6);
+    const fmt = d =>
+      d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return `${fmt(start)} – ${fmt(end)}`;
   }
 };
 
@@ -1949,69 +2003,8 @@ function initDashboardBackButtons() {
     if (
       section.id === "screen-home" ||
       section.id === "screen-collector" ||
-      section.id === "screen-collector-history"
-    )
-      return;
-    if (section.querySelector(".page-back-btn")) return;
-    const profileIds = new Set(["screen-profile", "screen-collector-profile", "screen-admin-profile"]);
-    if (profileIds.has(section.id)) {
-      const hero = section.querySelector(".profile-hero");
-      if (!hero) return;
-      const row = document.createElement("div");
-      row.className = "profile-back-row";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "page-back-btn page-back-btn--profile";
-      btn.textContent = "← Back";
-      btn.setAttribute("aria-label", "Go back");
-      btn.addEventListener("click", () => navGoBack());
-      row.appendChild(btn);
-      section.insertBefore(row, hero);
-      return;
-    }
-    const ph = section.querySelector(".page-header");
-    if (!ph) return;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "page-back-btn";
-    btn.textContent = "← Back";
-    btn.setAttribute("aria-label", "Go back");
-    btn.addEventListener("click", () => navGoBack());
-    ph.insertBefore(btn, ph.firstChild);
-  });
-}
-
-function navGoBack() {
-  const user = AuthService.currentUser();
-  if (!user) return;
-  const home = RoleGuard.getHomeScreen(normalizeRole(user.role));
-  if (navStack.length === 0) {
-    goTo(home, { trackHistory: false, skipAuthenticatedHistory: true, skipNavStack: true });
-    return;
-  }
-  const entry = navStack.pop();
-  const prev = entry?.screen;
-  if (!prev || !RoleGuard.canAccess(user.role, prev)) {
-    goTo(home, { trackHistory: false, skipAuthenticatedHistory: true, skipNavStack: true });
-    return;
-  }
-  const opts = {
-    trackHistory: false,
-    skipAuthenticatedHistory: true,
-    skipNavStack: true
-  };
-  if (prev === "track" && entry.trackSubView === "history") opts.trackSubView = "history";
-  goTo(prev, opts);
-}
-
-function initDashboardBackButtons() {
-  const dash = document.getElementById("mount-dashboard-phase");
-  if (!dash) return;
-  dash.querySelectorAll("section.screen").forEach(section => {
-    if (
-      section.id === "screen-home" ||
-      section.id === "screen-collector" ||
-      section.id === "screen-collector-history"
+      section.id === "screen-collector-history" ||
+      section.id === "screen-admin"
     )
       return;
     if (section.querySelector(".page-back-btn")) return;
@@ -2530,7 +2523,7 @@ function renderCollectorView() {
     : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No verified logs for ${year} yet.</p>`;
 
   const statValues = document.querySelectorAll("#screen-collector .stat-value");
-  if (statValues[0]) statValues[0].textContent = stats.verifiedOk;
+  if (statValues[0]) statValues[0].textContent = stats.verifiedCount;
   if (statValues[1]) statValues[1].textContent = stats.pending;
 }
 
@@ -2559,7 +2552,12 @@ async function handleCollectorDecision(logId, isVerified) {
       return;
     }
   }
-  const updated = VerificationService.verifyLog(logId, isVerified, user.id);
+  const updated = VerificationService.verifyLog(
+    logId,
+    isVerified,
+    user.id,
+    user.name || user.email || ""
+  );
   if (!updated) {
     showToast("Log not found.");
     return;
@@ -2576,6 +2574,39 @@ function adminWasteLogStatusLabel(log) {
   if (log.status === "Completed") return "Verified";
   if (log.status === "Rejected") return "Not segregated";
   return "Pending pickup";
+}
+
+function renderAdminDashboardHeader() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") return;
+  const loc = document.getElementById("admin-dashboard-location");
+  if (loc) loc.textContent = getUserBarangayLabel(user);
+  const line = document.getElementById("admin-dashboard-address-line");
+  if (line) {
+    const addr = String(user.address || "").trim();
+    if (addr) {
+      line.textContent = addr;
+      line.hidden = false;
+    } else {
+      line.textContent = "";
+      line.hidden = true;
+    }
+  }
+}
+
+function renderAdminProfileScreen() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") return;
+  const nm = document.getElementById("admin-profile-name");
+  const roleLine = document.getElementById("admin-profile-role-line");
+  const addrEl = document.getElementById("admin-profile-address-line");
+  const br = getUserBarangayLabel(user);
+  if (nm) nm.textContent = user.name || "Administrator";
+  if (roleLine) roleLine.textContent = `Barangay Admin · ${br}`;
+  if (addrEl) {
+    const raw = String(user.address || "").trim();
+    addrEl.innerHTML = `<strong>Address / barangay:</strong> ${raw || br || "—"}`;
+  }
 }
 
 /** Read-only mirror of all household logs — same records collectors verify (GET /logs for admin). */
@@ -2610,16 +2641,21 @@ function renderAdminWasteLogs() {
 }
 
 function renderAdminAnalytics() {
+  renderAdminDashboardHeader();
   if (apiMode && adminAnalyticsCache && adminAnalyticsCache.metrics) {
     const m = adminAnalyticsCache.metrics;
     const kpis = document.querySelectorAll("#screen-admin .kpi-card .kpi-value");
-    if (kpis[0]) kpis[0].textContent = `${m.totalCollectedKg}kg`;
+    if (kpis[0]) kpis[0].textContent = `${m.totalCollectedKg} kg`;
     if (kpis[1]) kpis[1].textContent = `${m.compliance}%`;
     if (kpis[2]) kpis[2].textContent = `${m.recyclingRate}%`;
-    if (kpis[3]) kpis[3].textContent = `${m.activeHouseholds}`;
+    if (kpis[3]) kpis[3].textContent = `${m.activeUsers}`;
 
-    const pointsNode = document.querySelector("#screen-admin .card.mb-12 .section-title + div");
-    if (pointsNode) pointsNode.textContent = `${m.ecoPointsDistributed}`;
+    const pointsVal = document.getElementById("admin-ecopoints-value");
+    if (pointsVal) pointsVal.textContent = `${Number(m.ecoPointsDistributed || 0).toLocaleString()}`;
+    const pointsSub = document.getElementById("admin-ecopoints-sub");
+    if (pointsSub) {
+      pointsSub.textContent = `EcoPoints awarded on verified pickups · ${Number(m.activeUsers || 0).toLocaleString()} active accounts (households & collectors)`;
+    }
 
     const adminUsers = document.getElementById("admin-users");
     if (adminUsers && adminAnalyticsCache.topHouseholds) {
@@ -2656,20 +2692,27 @@ function renderAdminAnalytics() {
         )
         .join("");
     }
+    const foot = document.getElementById("admin-chart-footnote");
+    if (foot) {
+      const u = AuthService.currentUser();
+      foot.textContent = `${adminAnalyticsCache.weekRangeLabel || AnalyticsService.rollingWeekCaption()} · ${getUserBarangayLabel(u)}`;
+    }
     return;
   }
 
   const metrics = AnalyticsService.metrics();
   const kpis = document.querySelectorAll("#screen-admin .kpi-card .kpi-value");
-  if (kpis[0]) kpis[0].textContent = `${metrics.totalCollectedKg}kg`;
+  if (kpis[0]) kpis[0].textContent = `${metrics.totalCollectedKg} kg`;
   if (kpis[1]) kpis[1].textContent = `${metrics.compliance}%`;
-  if (kpis[2]) kpis[2].textContent = `${metrics.completedLogs}`;
-  if (kpis[3]) kpis[3].textContent = `${AppState.users.filter(u => normalizeRole(u.role) === "household").length}`;
+  if (kpis[2]) kpis[2].textContent = `${metrics.recyclingRate}%`;
+  if (kpis[3]) kpis[3].textContent = `${metrics.activeUsers}`;
 
-  const pointsNodeLocal =
-    document.querySelector("#screen-admin .card.mb-12 .section-title + div") ||
-    document.querySelector("#screen-admin .card .section-title + div");
-  if (pointsNodeLocal) pointsNodeLocal.textContent = `${metrics.ecoPointsDistributed}`;
+  const pointsValLoc = document.getElementById("admin-ecopoints-value");
+  if (pointsValLoc) pointsValLoc.textContent = `${metrics.ecoPointsDistributed.toLocaleString()}`;
+  const pointsSubLoc = document.getElementById("admin-ecopoints-sub");
+  if (pointsSubLoc) {
+    pointsSubLoc.textContent = `EcoPoints awarded on verified pickups · ${metrics.activeUsers} active accounts (households & collectors)`;
+  }
 
   const adminUsers = document.getElementById("admin-users");
   if (adminUsers) {
@@ -2697,6 +2740,11 @@ function renderAdminAnalytics() {
         <div class="chart-label">${d.day}</div>
       </div>
     `).join("");
+  }
+  const footLoc = document.getElementById("admin-chart-footnote");
+  if (footLoc) {
+    const u = AuthService.currentUser();
+    footLoc.textContent = `${AnalyticsService.rollingWeekCaption()} · ${getUserBarangayLabel(u)}`;
   }
 }
 
@@ -3819,19 +3867,6 @@ function downloadLocalWasteLogsCsv() {
   URL.revokeObjectURL(url);
 }
 
-function adminBroadcastLocal(message) {
-  const households = AppState.users.filter(u => normalizeRole(u.role) === "household");
-  const text = `[Barangay broadcast] ${message}`;
-  households.forEach(h => {
-    AppState.notifications.unshift({
-      text,
-      createdAt: nowIso(),
-      userId: h.id
-    });
-  });
-  persistState();
-}
-
 function renderAdminToolsDetail(html) {
   const el = document.getElementById("admin-tools-detail");
   if (el) el.innerHTML = html;
@@ -3893,25 +3928,37 @@ async function openAdminReportTool() {
       const m = rep.metrics || {};
       const byStatus = rep.logsByStatus || {};
       const recent = rep.recentLogs || [];
+      const summaryLine = [
+        `Total waste collected: ${m.totalCollectedKg != null ? `${m.totalCollectedKg} kg` : "—"}`,
+        `Segregation compliance: ${m.compliance != null ? `${m.compliance}%` : "—"}`,
+        `Recycling rate: ${m.recyclingRate != null ? `${m.recyclingRate}%` : "—"}`,
+        `Active users: ${m.activeUsers != null ? m.activeUsers : "—"} (households & collectors)`,
+        `EcoPoints distributed: ${m.ecoPointsDistributed != null ? Number(m.ecoPointsDistributed).toLocaleString() : "—"}`
+      ].join(" · ");
+      const logSummary = `Logs — total: ${m.totalLogs ?? "—"} · completed: ${m.completedLogs ?? "—"} · pending: ${m.pendingLogs ?? "—"} · rejected: ${m.rejectedLogs ?? "—"}`;
       renderAdminToolsDetail(`
         <div class="card">
           <div class="section-title">📋 Full report</div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px">
-            Total logs: ${m.totalLogs ?? "—"} · Completed: ${m.completedLogs ?? "—"} · Pending: ${m.pendingLogs ?? "—"} · Rejected: ${m.rejectedLogs ?? "—"} · Compliance: ${m.compliance ?? "—"}%
-          </p>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 8px;line-height:1.5">${escapeAdminText(summaryLine)}</p>
+          <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px;line-height:1.5">${escapeAdminText(logSummary)}</p>
           <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">By status: ${Object.entries(byStatus)
             .map(([k, v]) => `${k}: ${v}`)
             .join(" · ") || "—"}</div>
           <div class="section-title" style="margin-top:12px">Recent activity</div>
           ${recent
             .slice(0, 20)
-            .map(
-              r => `
+            .map(r => {
+              const id = r.id || r.log_id || r.logCode || "—";
+              const uname = r.userName || r.householdName || "—";
+              const wt = r.type || r.wasteType || "—";
+              const pts = r.points != null ? r.points : r.eco_points_awarded;
+              const ptsBit = pts ? ` · +${pts} pts` : "";
+              return `
           <div class="card card-sm" style="margin-bottom:8px">
-            <strong>${r.logCode}</strong> · ${r.householdName} · ${r.wasteType} · ${r.weight} kg<br/>
-            <small>${r.status}${r.verifierCode ? ` · Verifier ${r.verifierCode}` : ""} · ${formatDateTime(r.createdAt)}</small>
-          </div>`
-            )
+            <strong>${escapeAdminText(String(id))}</strong> · ${escapeAdminText(String(uname))} · ${escapeAdminText(String(wt))} · ${Number(r.weight) || 0} kg<br/>
+            <small>${escapeAdminText(String(r.status || ""))}${ptsBit} · ${formatDateTime(r.createdAt)}</small>
+          </div>`;
+            })
             .join("")}
         </div>`);
       return;
@@ -3921,11 +3968,19 @@ async function openAdminReportTool() {
     }
   }
   const m = AnalyticsService.metrics();
+  const summaryOffline = [
+    `Total waste collected: ${m.totalCollectedKg} kg`,
+    `Segregation compliance: ${m.compliance}%`,
+    `Recycling rate: ${m.recyclingRate}%`,
+    `Active users: ${m.activeUsers} (households & collectors)`,
+    `EcoPoints distributed: ${m.ecoPointsDistributed.toLocaleString()}`
+  ].join(" · ");
   renderAdminToolsDetail(`
     <div class="card">
       <div class="section-title">📋 Full report (local)</div>
-      <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px">
-        Total logs: ${m.totalLogs} · Completed: ${m.completedLogs} · Pending: ${m.pendingLogs} · Not segregated: ${m.rejectedLogs ?? 0} · Compliance: ${m.compliance}%
+      <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px;line-height:1.5">${escapeAdminText(summaryOffline)}</p>
+      <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px;line-height:1.5">
+        Logs — total: ${m.totalLogs} · completed: ${m.completedLogs} · pending: ${m.pendingLogs} · not segregated: ${m.rejectedLogs ?? 0}
       </p>
       <div class="section-title" style="margin-top:12px">All logs</div>
       ${AppState.logs
@@ -3935,146 +3990,8 @@ async function openAdminReportTool() {
         .map(
           l => `
       <div class="card card-sm" style="margin-bottom:8px">
-        <strong>${l.id}</strong> · ${l.userName} · ${l.type} · ${l.weight} kg<br/>
-        <small>${l.status}${l.verifiedBy ? ` · ${l.verifiedBy}` : ""} · ${formatDateTime(l.createdAt)}</small>
-      </div>`
-        )
-        .join("")}
-    </div>`);
-}
-
-function downloadLocalWasteLogsCsv() {
-  const header = "log_code,user_id,user_name,type,weight,status,points,created_at\n";
-  const lines = AppState.logs.map(l =>
-    `${l.id},${l.userId},"${String(l.userName || "").replace(/"/g, '""')}",${l.type},${l.weight},${l.status},${l.ecoPointsAwarded || 0},${l.createdAt || ""}`
-  );
-  const blob = new Blob([header + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "binbuddy-waste-logs.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function adminBroadcastLocal(message) {
-  const households = AppState.users.filter(u => normalizeRole(u.role) === "household");
-  const text = `[Barangay broadcast] ${message}`;
-  households.forEach(h => {
-    AppState.notifications.unshift({
-      text,
-      createdAt: nowIso(),
-      userId: h.id
-    });
-  });
-  persistState();
-}
-
-function renderAdminToolsDetail(html) {
-  const el = document.getElementById("admin-tools-detail");
-  if (el) el.innerHTML = html;
-}
-
-async function openAdminUsersTool() {
-  const user = AuthService.currentUser();
-  if (!user || user.role !== "admin") {
-    showToast("Admin access only.");
-    return;
-  }
-  if (apiMode && getToken()) {
-    try {
-      const data = await apiFetch("/admin/users");
-      AppState.users = (data.users || []).map(u => ({
-        id: u.id,
-        name: u.name,
-        email: u.email || "",
-        phoneNumber: u.phoneNumber || "",
-        address: u.address || "",
-        gender: u.gender || "",
-        role: u.role,
-        ecoPoints: Number(u.ecoPoints) || 0,
-        streak: Number(u.streak) || 0,
-        badge: u.badge || "",
-        barangay: u.barangay || "",
-        password: ""
-      }));
-    } catch (e) {
-      showToast(e.message || "Could not load users.");
-      return;
-    }
-  }
-  const rows = AppState.users.slice().sort((a, b) => String(a.role).localeCompare(String(b.role)));
-  renderAdminToolsDetail(`
-    <div class="card">
-      <div class="section-title">👥 Users (${rows.length})</div>
-      ${rows
-        .map(
-          u => `
-      <div class="card card-sm" style="margin-bottom:8px">
-        <strong>${u.name}</strong> · ${u.id} · ${u.role}<br/>
-        <small>${u.email || "—"} · ${getUserBarangayLabel(u)} · ${u.ecoPoints ?? 0} pts</small>
-      </div>`
-        )
-        .join("")}
-    </div>`);
-}
-
-async function openAdminReportTool() {
-  const user = AuthService.currentUser();
-  if (!user || user.role !== "admin") {
-    showToast("Admin access only.");
-    return;
-  }
-  if (apiMode && getToken()) {
-    try {
-      const rep = await apiFetch("/admin/report");
-      const m = rep.metrics || {};
-      const byStatus = rep.logsByStatus || {};
-      const recent = rep.recentLogs || [];
-      renderAdminToolsDetail(`
-        <div class="card">
-          <div class="section-title">📋 Full report</div>
-          <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px">
-            Total logs: ${m.totalLogs ?? "—"} · Completed: ${m.completedLogs ?? "—"} · Pending: ${m.pendingLogs ?? "—"} · Rejected: ${m.rejectedLogs ?? "—"} · Compliance: ${m.compliance ?? "—"}%
-          </p>
-          <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">By status: ${Object.entries(byStatus)
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(" · ") || "—"}</div>
-          <div class="section-title" style="margin-top:12px">Recent activity</div>
-          ${recent
-            .slice(0, 20)
-            .map(
-              r => `
-          <div class="card card-sm" style="margin-bottom:8px">
-            <strong>${r.logCode}</strong> · ${r.householdName} · ${r.wasteType} · ${r.weight} kg<br/>
-            <small>${r.status}${r.verifierCode ? ` · Verifier ${r.verifierCode}` : ""} · ${formatDateTime(r.createdAt)}</small>
-          </div>`
-            )
-            .join("")}
-        </div>`);
-      return;
-    } catch (e) {
-      showToast(e.message || "Could not load report.");
-      return;
-    }
-  }
-  const m = AnalyticsService.metrics();
-  renderAdminToolsDetail(`
-    <div class="card">
-      <div class="section-title">📋 Full report (local)</div>
-      <p style="font-size:0.86rem;color:var(--text-muted);margin:0 0 10px">
-        Total logs: ${m.totalLogs} · Completed: ${m.completedLogs} · Pending: ${m.pendingLogs} · Not segregated: ${m.rejectedLogs ?? 0} · Compliance: ${m.compliance}%
-      </p>
-      <div class="section-title" style="margin-top:12px">All logs</div>
-      ${AppState.logs
-        .slice()
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-        .slice(0, 40)
-        .map(
-          l => `
-      <div class="card card-sm" style="margin-bottom:8px">
-        <strong>${l.id}</strong> · ${l.userName} · ${l.type} · ${l.weight} kg<br/>
-        <small>${l.status}${l.verifiedBy ? ` · ${l.verifiedBy}` : ""} · ${formatDateTime(l.createdAt)}</small>
+        <strong>${escapeAdminText(String(l.id))}</strong> · ${escapeAdminText(String(l.userName || ""))} · ${escapeAdminText(String(l.type || ""))} · ${l.weight} kg<br/>
+        <small>${escapeAdminText(String(l.status))}${l.ecoPointsAwarded ? ` · +${l.ecoPointsAwarded} pts` : ""} · ${formatDateTime(l.createdAt)}</small>
       </div>`
         )
         .join("")}
@@ -4116,71 +4033,7 @@ function initAdminActions() {
 
   document.getElementById("btn-admin-users")?.addEventListener("click", () => openAdminUsersTool());
 
-  document.getElementById("btn-admin-broadcast")?.addEventListener("click", async () => {
-    const user = AuthService.currentUser();
-    if (!user || user.role !== "admin") {
-      showToast("Admin access only.");
-      return;
-    }
-    const msg = window.prompt("Broadcast message to all households:");
-    if (msg == null) return;
-    const trimmed = String(msg).trim();
-    if (!trimmed) {
-      showToast("Message required.");
-      return;
-    }
-    if (apiMode && getToken()) {
-      try {
-        const res = await apiFetch("/admin/broadcast", {
-          method: "POST",
-          body: JSON.stringify({ message: trimmed })
-        });
-        showToast(`Broadcast sent to ${res.recipients ?? 0} households.`);
-        await syncFromServer();
-        refreshUI();
-        return;
-      } catch (e) {
-        showToast(e.message || "Broadcast failed.");
-        return;
-      }
-    }
-    adminBroadcastLocal(trimmed);
-    showToast(`Broadcast sent to ${AppState.users.filter(u => normalizeRole(u.role) === "household").length} households.`);
-    refreshUI();
-  });
-
   document.getElementById("btn-admin-report")?.addEventListener("click", () => openAdminReportTool());
-
-  // Excel-friendly XML + XSL export (admin only).
-  const exportXmlBtn = document.getElementById("btn-admin-export-xml");
-  exportXmlBtn?.addEventListener("click", async () => {
-    const user = AuthService.currentUser();
-    if (!user || user.role !== "admin") {
-      showToast("Admin access only.");
-      return;
-    }
-    if (apiMode && getToken()) {
-      try {
-        const res = await fetch(`${API_BASE}/export/logs.xml`, {
-          headers: { Authorization: `Bearer ${getToken()}` }
-        });
-        if (!res.ok) throw new Error("Export failed.");
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "binbuddy-waste-logs.xml";
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast("XML downloaded.");
-        return;
-      } catch (e) {
-        showToast(e.message || "Export failed.");
-        return;
-      }
-    }
-    showToast("XML export requires server mode.");
-  });
 }
 
 function resolveHelpTourSteps() {
@@ -4387,6 +4240,7 @@ function refreshUI() {
   void hydrateCollectorLogPhotoMounts();
   renderLeaderboard();
   renderAdminAnalytics();
+  renderAdminProfileScreen();
   renderAdminWasteLogs();
   void renderAdminRewardQueue();
   initRewards();

@@ -507,12 +507,12 @@
       <!-- Collector Stats -->
       <div class="stats-grid collector-stats-grid">
         <div class="stat-card">
-          <div class="stat-icon">✅</div>
+          <div class="stat-icon" aria-hidden="true">📋</div>
           <div class="stat-value">0</div>
           <div class="stat-label">Verified</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon">⏳</div>
+          <div class="stat-icon" aria-hidden="true">⏳</div>
           <div class="stat-value">0</div>
           <div class="stat-label">Pending</div>
         </div>
@@ -532,7 +532,7 @@
         <div class="eco-tip" style="margin-bottom:12px">
           <strong>Read-only</strong> · Completed verifications for <span id="collector-inline-verified-year"></span>. Logs leave Unverified once you verify.
         </div>
-        <div class="section-title">✅ Verified logs</div>
+        <div class="section-title">Verified logs</div>
         <div id="pickup-list-verified"></div>
       </div>
     </div>
@@ -561,7 +561,8 @@
   <section id="screen-admin" class="screen">
     <div class="page-header">
       <div class="page-header-sub">🏢 Barangay Admin Dashboard</div>
-      <h1>Brgy. Holy Spirit</h1>
+      <h1 id="admin-dashboard-location">Your barangay</h1>
+      <p id="admin-dashboard-address-line" class="admin-dashboard-address-line" hidden></p>
     </div>
     <div class="page-content">
       <!-- KPI Cards -->
@@ -594,18 +595,14 @@
         <div class="admin-chart-bar" id="admin-chart">
           <!-- Bars rendered below -->
         </div>
-        <div style="font-size:0.75rem;color:var(--text-muted);text-align:center">April 8–14, 2026 · Brgy. Holy Spirit</div>
+        <div id="admin-chart-footnote" class="admin-chart-footnote">Last 7 days · barangay</div>
       </div>
 
       <!-- EcoPoints Distributed -->
       <div class="card mb-12">
         <div class="section-title">⭐ EcoPoints Distributed</div>
-        <div style="font-size:2rem;font-weight:900;font-family:var(--font-main);color:var(--primary)">48,750</div>
-        <div style="font-size:0.82rem;color:var(--text-muted)">Total this month · 312 active users</div>
-        <div class="progress-bar" style="margin-top:10px">
-          <div class="progress-fill" style="width:65%"></div>
-        </div>
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">65% of monthly target (75,000 pts)</div>
+        <div id="admin-ecopoints-value" style="font-size:2rem;font-weight:900;font-family:var(--font-main);color:var(--primary)">0</div>
+        <div id="admin-ecopoints-sub" style="font-size:0.82rem;color:var(--text-muted);margin-top:6px;line-height:1.45">—</div>
       </div>
 
       <!-- Top Households -->
@@ -617,12 +614,10 @@
 
       <!-- Admin Tools -->
       <div class="section-title">🛠️ Admin Tools</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-        <button type="button" class="btn btn-primary" id="btn-export" style="font-size:0.88rem">📊 Export CSV</button>
-        <button type="button" class="btn btn-outline" id="btn-admin-export-xml" style="font-size:0.88rem">📄 Export XML (Excel)</button>
-        <button type="button" class="btn btn-outline" id="btn-admin-broadcast" style="font-size:0.88rem">📢 Broadcast</button>
-        <button type="button" class="btn btn-outline" id="btn-admin-users" style="font-size:0.88rem">👥 Users</button>
-        <button type="button" class="btn btn-outline" id="btn-admin-report" style="font-size:0.88rem">📋 Full Report</button>
+      <div class="admin-tools-grid">
+        <button type="button" class="btn btn-outline admin-tool-btn" id="btn-export">📊 Export CSV</button>
+        <button type="button" class="btn btn-outline admin-tool-btn" id="btn-admin-users">👥 Users</button>
+        <button type="button" class="btn btn-outline admin-tool-btn" id="btn-admin-report">📋 Full Report</button>
       </div>
       <div id="admin-tools-detail"></div>
     </div>
@@ -665,15 +660,15 @@
   <section id="screen-admin-profile" class="screen">
     <div class="profile-hero">
       <div class="profile-avatar">🏢</div>
-      <div class="profile-name">Brgy. Holy Spirit Admin</div>
-      <div class="profile-role">Administrator · Lipa City</div>
+      <div class="profile-name" id="admin-profile-name">Administrator</div>
+      <div class="profile-role" id="admin-profile-role-line">Barangay Admin</div>
     </div>
     <div style="padding:16px">
       <div class="card">
         <div class="section-title">👤 Admin Profile</div>
         <div style="font-size:0.86rem;color:var(--text-muted);line-height:1.6">
           <div><strong>Role:</strong> Barangay Admin</div>
-          <div><strong>Office:</strong> Brgy. Holy Spirit</div>
+          <div id="admin-profile-address-line"><strong>Address / barangay:</strong> —</div>
         </div>
       </div>
       <div class="profile-menu-item" onclick="logout()" style="color:var(--danger);margin-top:10px;border-radius:12px;border:1px solid var(--border)">
@@ -959,30 +954,6 @@
 -->
 <script src="js/app.js"></script>
 <script>
-  /* ---- Admin Chart Render ---- */
-  (function renderAdminChart() {
-    // Triggered when admin screen is shown
-    const data = [
-      { day:'Mon', val:62 },
-      { day:'Tue', val:48 },
-      { day:'Wed', val:75 },
-      { day:'Thu', val:55 },
-      { day:'Fri', val:80 },
-      { day:'Sat', val:35 },
-      { day:'Sun', val:28 },
-    ];
-    const max = Math.max(...data.map(d=>d.val));
-    const chart = document.getElementById('admin-chart');
-    if (!chart) return;
-    chart.innerHTML = data.map(d => `
-      <div class="chart-col">
-        <div class="chart-val">${d.val}</div>
-        <div class="chart-bar" style="height:${(d.val/max)*80}px"></div>
-        <div class="chart-label">${d.day}</div>
-      </div>
-    `).join('');
-  })();
-
   /* ---- Reward Tab Switch ---- */
   function showRewardTab(panel, btn) {
     ['catalog','leaderboard-tab'].forEach(id => {

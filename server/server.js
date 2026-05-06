@@ -892,23 +892,80 @@ app.get('/api/admin/reward-redemptions/:id/photo', authRequired, requireDb, requ
     }
 });
 
+function padDatePart(n) {
+    return String(n).padStart(2, '0');
+}
+
+function dateToYMD(d) {
+    return `${d.getFullYear()}-${padDatePart(d.getMonth() + 1)}-${padDatePart(d.getDate())}`;
+}
+
+function rollingWeekRangeCaption() {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(end.getDate() - 6);
+    const fmt = (dt) =>
+        dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${fmt(start)} – ${fmt(end)}`;
+}
+
+async function buildRollingWeeklyWasteChart(pool) {
+    const [rows] = await pool.query(
+        `SELECT DATE(completed_at) AS d, COALESCE(SUM(weight), 0) AS kg
+         FROM waste_logs
+         WHERE status = 'Completed' AND completed_at IS NOT NULL
+           AND DATE(completed_at) >= DATE(DATE_SUB(CURDATE(), INTERVAL 6 DAY))
+         GROUP BY DATE(completed_at)`
+    );
+    const sums = {};
+    for (const r of rows || []) {
+        let key;
+        if (r.d instanceof Date) {
+            key = dateToYMD(new Date(r.d.getTime()));
+        } else {
+            key = String(r.d || '').slice(0, 10);
+        }
+        sums[key] = Number(r.kg) || 0;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const chart = [];
+    for (let i = 6; i >= 0; i -= 1) {
+        const dt = new Date(today);
+        dt.setDate(today.getDate() - i);
+        const key = dateToYMD(dt);
+        const label = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        chart.push({ day: label, val: Number((sums[key] || 0).toFixed(1)) });
+    }
+    return { weeklyChart: chart, weekRangeLabel: rollingWeekRangeCaption() };
+}
+
 app.get('/api/admin/analytics', authRequired, requireDb, requireRoles('admin'), async (_req, res) => {
     try {
         const [[{ totalKg }]] = await pool.query(
             `SELECT COALESCE(SUM(weight), 0) AS totalKg FROM waste_logs WHERE status = 'Completed'`
         );
-        const [[{ households }]] = await pool.query(`SELECT COUNT(*) AS households FROM users WHERE role = 'household'`);
+        const [[{ activeUsers }]] = await pool.query(
+            `SELECT COUNT(*) AS activeUsers FROM users WHERE LOWER(role) IN ('household','collector')`
+        );
         const [[{ points }]] = await pool.query(
             `SELECT COALESCE(SUM(eco_points_awarded), 0) AS points FROM waste_logs WHERE status = 'Completed'`
         );
-        const [[{ completedLogs, verifiedLogs }]] = await pool.query(`
+        const [[counts]] = await pool.query(`
             SELECT
-              SUM(CASE WHEN status IN ('Completed','Rejected') THEN 1 ELSE 0 END) AS completedLogs,
-              SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS verifiedLogs
+              SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS nCompleted,
+              SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) AS nPending,
+              SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END) AS nRejected,
+              COALESCE(SUM(CASE WHEN status IN ('Completed','Pending','Rejected') THEN weight ELSE 0 END), 0) AS totalWeightKg,
+              COALESCE(SUM(CASE WHEN status = 'Completed' THEN weight ELSE 0 END), 0) AS completedKg
             FROM waste_logs
         `);
-        const denom = Number(completedLogs || 0);
-        const compliance = denom > 0 ? Math.round((Number(verifiedLogs || 0) / denom) * 100) : 0;
+        const decided =
+            Number(counts.nCompleted || 0) + Number(counts.nPending || 0) + Number(counts.nRejected || 0);
+        const compliance = decided > 0 ? Math.round((Number(counts.nCompleted || 0) / decided) * 100) : 0;
+        const tw = Number(counts.totalWeightKg || 0);
+        const ck = Number(counts.completedKg || 0);
+        const recyclingRate = tw > 0 ? Math.round((ck / tw) * 100) : 0;
 
         if (!usersColumnInfo.loaded) await readUsersColumns();
         const idCol = usersIdColumn();
@@ -929,35 +986,26 @@ app.get('/api/admin/analytics', authRequired, requireDb, requireRoles('admin'), 
         }));
 
         const totalCollected = Number(totalKg || 0);
-        const [[{ recyclableKg }]] = await pool.query(
-            `SELECT COALESCE(SUM(weight), 0) AS recyclableKg FROM waste_logs WHERE status = 'Completed' AND waste_type = 'HDPE'`
-        );
-        const recRate = totalCollected > 0 ? Math.round((Number(recyclableKg || 0) / totalCollected) * 100) : 0;
+        const { weeklyChart, weekRangeLabel } = await buildRollingWeeklyWasteChart(pool);
 
         res.json({
             metrics: {
                 totalCollectedKg: totalCollected.toFixed(1),
                 compliance,
-                recyclingRate: recRate,
-                activeHouseholds: Number(households || 0),
+                recyclingRate,
+                activeUsers: Number(activeUsers || 0),
                 ecoPointsDistributed: Number(points || 0)
             },
             topHouseholds,
-            weeklyChart: [
-                { day: 'Mon', val: 0 },
-                { day: 'Tue', val: 0 },
-                { day: 'Wed', val: 0 },
-                { day: 'Thu', val: 0 },
-                { day: 'Fri', val: 0 },
-                { day: 'Sat', val: 0 },
-                { day: 'Sun', val: 0 }
-            ]
+            weeklyChart,
+            weekRangeLabel
         });
     } catch (_e) {
         res.json({
-            metrics: { totalCollectedKg: 0, compliance: 0, recyclingRate: 0, activeHouseholds: 0, ecoPointsDistributed: 0 },
+            metrics: { totalCollectedKg: '0', compliance: 0, recyclingRate: 0, activeUsers: 0, ecoPointsDistributed: 0 },
             topHouseholds: [],
-            weeklyChart: []
+            weeklyChart: [],
+            weekRangeLabel: ''
         });
     }
 });
@@ -975,27 +1023,55 @@ app.get('/api/admin/users', authRequired, requireDb, requireRoles('admin'), asyn
 
 app.get('/api/admin/report', authRequired, requireDb, requireRoles('admin'), async (_req, res) => {
     try {
-        const [[metrics]] = await pool.query(`
+        const [[row]] = await pool.query(`
             SELECT
               COUNT(*) AS totalLogs,
-              SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) AS pending,
-              SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS completed,
-              COALESCE(SUM(weight), 0) AS totalKg
+              SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) AS pendingLogs,
+              SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS completedLogs,
+              SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END) AS rejectedLogs,
+              COALESCE(SUM(CASE WHEN status IN ('Completed','Pending','Rejected') THEN weight ELSE 0 END), 0) AS totalWeightKg,
+              COALESCE(SUM(CASE WHEN status = 'Completed' THEN weight ELSE 0 END), 0) AS completedKg
             FROM waste_logs
         `);
+        const decided =
+            Number(row.completedLogs || 0) + Number(row.pendingLogs || 0) + Number(row.rejectedLogs || 0);
+        const compliance = decided > 0 ? Math.round((Number(row.completedLogs || 0) / decided) * 100) : 0;
+        const tw = Number(row.totalWeightKg || 0);
+        const ck = Number(row.completedKg || 0);
+        const recyclingRate = tw > 0 ? Math.round((ck / tw) * 100) : 0;
+        const [[{ points }]] = await pool.query(
+            `SELECT COALESCE(SUM(eco_points_awarded), 0) AS points FROM waste_logs WHERE status = 'Completed'`
+        );
+        const [[{ activeUsers }]] = await pool.query(
+            `SELECT COUNT(*) AS activeUsers FROM users WHERE LOWER(role) IN ('household','collector')`
+        );
         const [recent] = await pool.query(`
             SELECT log_id AS id, user_name AS userName, waste_type AS type, weight, status, eco_points_awarded AS points, created_at AS createdAt
             FROM waste_logs ORDER BY created_at DESC LIMIT 20
         `);
         res.json({
-            metrics,
+            metrics: {
+                totalLogs: Number(row.totalLogs || 0),
+                pendingLogs: Number(row.pendingLogs || 0),
+                completedLogs: Number(row.completedLogs || 0),
+                rejectedLogs: Number(row.rejectedLogs || 0),
+                totalCollectedKg: ck.toFixed(1),
+                compliance,
+                recyclingRate,
+                activeUsers: Number(activeUsers || 0),
+                ecoPointsDistributed: Number(points || 0)
+            },
             logsByStatus: {
-                Pending: Number(metrics.pending || 0),
-                Completed: Number(metrics.completed || 0)
+                Pending: Number(row.pendingLogs || 0),
+                Completed: Number(row.completedLogs || 0),
+                Rejected: Number(row.rejectedLogs || 0)
             },
             recentLogs: recent.map((x) => ({
-                ...x,
+                id: x.id,
+                userName: x.userName,
+                type: x.type,
                 weight: Number(x.weight),
+                status: x.status,
                 points: Number(x.points || 0),
                 createdAt: x.createdAt ? new Date(x.createdAt).toISOString() : null
             }))

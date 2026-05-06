@@ -843,7 +843,7 @@ a { text-decoration: none; color: inherit; }
 }
 .stat-card .stat-label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; margin-top: 2px; }
 
-/* Collector dashboard: keep Verified + Pending equal width when global stats-grid uses 4 columns on desktop */
+/* Collector dashboard: equal-width columns; cards share height with labels aligned at bottom */
 #screen-collector .collector-stats-grid.stats-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
@@ -852,9 +852,29 @@ a { text-decoration: none; color: inherit; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  min-height: 112px;
+  justify-content: flex-start;
+  min-height: 120px;
   box-sizing: border-box;
+  padding: 16px 12px;
+}
+#screen-collector .collector-stats-grid .stat-card .stat-icon {
+  font-size: 1.65rem;
+  line-height: 1;
+  margin-bottom: 8px;
+  min-height: 1.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#screen-collector .collector-stats-grid .stat-card .stat-value {
+  margin: 2px 0;
+  line-height: 1.2;
+}
+#screen-collector .collector-stats-grid .stat-card .stat-label {
+  margin-top: auto;
+  padding-top: 8px;
+  text-align: center;
+  max-width: 100%;
 }
 @media (min-width: 900px) {
   #screen-collector .collector-stats-grid.stats-grid {
@@ -1571,6 +1591,34 @@ a { text-decoration: none; color: inherit; }
 }
 .chart-label { font-size: 0.65rem; color: var(--text-muted); font-weight: 600; }
 .chart-val { font-size: 0.68rem; font-weight: 800; color: var(--primary); }
+.admin-chart-footnote {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 6px;
+  line-height: 1.35;
+}
+.admin-dashboard-address-line {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: -6px 0 10px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+#screen-admin .admin-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+#screen-admin .admin-tool-btn {
+  font-size: 0.88rem;
+  justify-content: center;
+  padding: 12px 10px;
+  min-height: 46px;
+  width: 100%;
+  box-sizing: border-box;
+}
 .admin-kpi {
   display: grid;
   grid-template-columns: 1fr 1fr;
