@@ -26,7 +26,8 @@
       <button type="button" class="top-nav-item" data-nav="track" data-role="household">Log Disposal</button>
       <button type="button" class="top-nav-item" data-nav="rewards" data-role="household">Rewards</button>
       <button type="button" class="top-nav-item" data-nav="notifications" data-role="household">Activity Log</button>
-      <button type="button" class="top-nav-item" data-nav="collector" data-role="collector">Collector</button>
+      <button type="button" class="top-nav-item" data-nav="collector" data-collector-tab="unverified" data-role="collector">Unverified</button>
+      <button type="button" class="top-nav-item" data-nav="collector" data-collector-tab="verified" data-role="collector">Verified</button>
       <button type="button" class="top-nav-item" data-nav="collector-history" data-role="collector">History</button>
       <button type="button" class="top-nav-item" data-nav="admin" data-role="admin">Admin</button>
       <button type="button" class="top-nav-item" data-nav="profile" data-role="household">Profile</button>
@@ -527,23 +528,35 @@
         </div>
       </div>
 
-      <!-- Search User -->
-      <div class="guide-search mb-12">
-        <span>🔍</span>
-        <input type="text" placeholder="Search household by name or address..."/>
+      <div class="log-form-tabs collector-pickup-tabs" style="margin-bottom:12px" role="tablist" aria-label="Pickup queue">
+        <button type="button" class="log-tab active" data-collector-tab="unverified" onclick="setCollectorPickupTab('unverified')">Unverified</button>
+        <button type="button" class="log-tab" data-collector-tab="verified" onclick="setCollectorPickupTab('verified')">Verified</button>
       </div>
 
-      <!-- Pickup List -->
-      <div class="section-title">🏠 Pickup List – Brgy. Holy Spirit</div>
-      <div id="pickup-list">
-        <!-- Rendered by JS -->
+      <div id="collector-panel-unverified">
+        <!-- Search User -->
+        <div class="guide-search mb-12">
+          <span>🔍</span>
+          <input type="text" placeholder="Search household by name or address..."/>
+        </div>
+
+        <div class="section-title">🏠 Pending pickup — verify or flag</div>
+        <div id="pickup-list"></div>
+
+        <!-- Photo Proof -->
+        <div style="border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;margin:14px 0;cursor:pointer;background:#fafffe"
+             onclick="showToast('📷 Camera would open for photo proof')">
+          <div style="font-size:2rem">📷</div>
+          <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px">Upload photo proof of pickup</div>
+        </div>
       </div>
 
-      <!-- Photo Proof -->
-      <div style="border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;margin:14px 0;cursor:pointer;background:#fafffe"
-           onclick="showToast('📷 Camera would open for photo proof')">
-        <div style="font-size:2rem">📷</div>
-        <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px">Upload photo proof of pickup</div>
+      <div id="collector-panel-verified" hidden>
+        <div class="eco-tip" style="margin-bottom:12px">
+          <strong>Read-only</strong> · Completed verifications for <span id="collector-inline-verified-year"></span>. Logs leave Unverified once you verify.
+        </div>
+        <div class="section-title">✅ Verified logs</div>
+        <div id="pickup-list-verified"></div>
       </div>
     </div>
   </section>

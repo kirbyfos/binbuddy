@@ -529,7 +529,9 @@ const AppState = {
   redemptions: [],
   /** Local-only: reward redeemals with QR proof for admin download (data URL). */
   rewardQrSubmissions: [],
-  notifications: []
+  notifications: [],
+  /** Collector pickup screen: pending/rejected vs completed. */
+  collectorPickupTab: "unverified"
 };
 
 function normalizeRole(role) {
@@ -1681,7 +1683,12 @@ function syncBottomNav(user, screen) {
     btn.classList.toggle("hidden", !isRoleMatch);
     const action = btn.dataset.action || "";
     const targetScreen = btn.dataset.nav || "";
-    const isActive = isRoleMatch && !action && targetScreen === screen;
+    const pickupTab = btn.dataset.collectorTab;
+    let isActive = isRoleMatch && !action && targetScreen === screen;
+    if (isActive && screen === "collector" && pickupTab !== undefined && pickupTab !== "") {
+      const cur = AppState.collectorPickupTab === "verified" ? "verified" : "unverified";
+      isActive = pickupTab === cur;
+    }
     btn.classList.toggle("active", isActive);
   });
 }
@@ -2083,10 +2090,43 @@ function goToRewardsLeaderboard() {
   });
 }
 
+function setCollectorPickupTab(tab) {
+  AppState.collectorPickupTab = tab === "verified" ? "verified" : "unverified";
+  const sec = document.getElementById("screen-collector");
+  if (sec) {
+    sec.querySelectorAll(".collector-pickup-tabs .log-tab").forEach(b => {
+      const t = b.dataset.collectorTab === "verified" ? "verified" : "unverified";
+      b.classList.toggle("active", t === AppState.collectorPickupTab);
+    });
+  }
+  const user = AuthService.currentUser();
+  syncBottomNav(user, AppState.currentScreen);
+  renderCollectorView();
+}
+
 function renderCollectorView() {
   const list = document.getElementById("pickup-list");
-  if (!list) return;
+  const listVerified = document.getElementById("pickup-list-verified");
+  const panelU = document.getElementById("collector-panel-unverified");
+  const panelV = document.getElementById("collector-panel-verified");
+  if (!list || !listVerified) return;
+
+  const tab = AppState.collectorPickupTab === "verified" ? "verified" : "unverified";
+  if (panelU) panelU.hidden = tab !== "unverified";
+  if (panelV) panelV.hidden = tab !== "verified";
+
+  const sec = document.getElementById("screen-collector");
+  if (sec) {
+    sec.querySelectorAll(".collector-pickup-tabs .log-tab").forEach(b => {
+      const t = b.dataset.collectorTab === "verified" ? "verified" : "unverified";
+      b.classList.toggle("active", t === tab);
+    });
+  }
+
   const year = new Date().getFullYear();
+  const yearEl = document.getElementById("collector-inline-verified-year");
+  if (yearEl) yearEl.textContent = String(year);
+
   const stats = computeCollectorDashboardStats(AppState.logs);
   const yLogs = collectorYearlyLogs(AppState.logs, year);
   const active = yLogs
@@ -2114,7 +2154,12 @@ function renderCollectorView() {
   `
         )
         .join("")
-    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No active pickups for ${year}. Open History for verified logs.</p>`;
+    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No unverified pickups for ${year}. Verified logs appear in the Verified tab.</p>`;
+
+  const verifiedSorted = sortedVerifiedLogsYear(AppState.logs, year);
+  listVerified.innerHTML = verifiedSorted.length
+    ? verifiedSorted.map(l => htmlVerifiedLogCardReadOnly(l)).join("")
+    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No verified logs for ${year} yet.</p>`;
 
   const statValues = document.querySelectorAll("#screen-collector .stat-value");
   if (statValues[0]) statValues[0].textContent = stats.pickupsToday;
@@ -2137,7 +2182,9 @@ async function handleCollectorDecision(logId, isVerified) {
       });
       await syncFromServer();
       showToast(
-        isVerified ? "Verified — log moved to history." : "Marked as not segregated — stays on active dashboard."
+        isVerified
+          ? "Verified — log is on the Verified tab."
+          : "Marked as not segregated — stays on Unverified until resolved."
       );
       refreshUI();
       return;
@@ -2152,7 +2199,9 @@ async function handleCollectorDecision(logId, isVerified) {
     return;
   }
   showToast(
-    isVerified ? "Verified — log moved to history." : "Marked as not segregated — stays on active dashboard."
+    isVerified
+      ? "Verified — log is on the Verified tab."
+      : "Marked as not segregated — stays on Unverified until resolved."
   );
   refreshUI();
 }
@@ -3786,6 +3835,10 @@ function initNavigation() {
         return;
       }
       const screen = btn.dataset.nav;
+      if (screen === "collector") {
+        const subt = btn.dataset.collectorTab;
+        AppState.collectorPickupTab = subt === "verified" ? "verified" : "unverified";
+      }
       if (screen) goTo(screen);
       header?.classList.remove("is-open");
       burger?.setAttribute("aria-expanded", "false");
@@ -3896,6 +3949,7 @@ function clearRuntimeUserContext() {
   AppState.currentScreen = "auth";
   AppState.logType = "bio";
   AppState.logQty = 1.0;
+  AppState.collectorPickupTab = "unverified";
 }
 
 function logout(showMessage = true, requireConfirmation = false) {
@@ -4005,6 +4059,7 @@ window.renderNotifications = renderNotifications;
 window.initGuide = initGuide;
 window.initRewards = initRewards;
 window.handleCollectorDecision = handleCollectorDecision;
+window.setCollectorPickupTab = setCollectorPickupTab;
 window.beginRewardSubmission = beginRewardSubmission;
 window.cancelRewardSubmission = cancelRewardSubmission;
 window.selectModalType = selectModalType;
