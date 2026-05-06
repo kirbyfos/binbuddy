@@ -2589,38 +2589,147 @@ function escapeAdminText(s) {
     .replace(/"/g, "&quot;");
 }
 
-let pendingRedeemQrRewardId = null;
+/** Household reward picker + QR panel */
+let rewardSubmissionSelection = null;
+let rewardSubmissionFile = null;
+let rewardPreviewObjectUrl = null;
 
-function bindRewardQrPhotoInputOnce() {
-  const fi = document.getElementById("reward-qr-photo-input");
-  if (!fi || fi.dataset.bbRewardQrBound === "1") return;
-  fi.dataset.bbRewardQrBound = "1";
-  fi.addEventListener("change", () => {
-    const file = fi.files && fi.files[0];
-    fi.value = "";
-    const rid = pendingRedeemQrRewardId;
-    pendingRedeemQrRewardId = null;
-    if (!file || !rid) return;
-    void submitRewardRedemptionWithPhoto(rid, file);
-  });
+function revokeRewardPreviewUrl() {
+  if (rewardPreviewObjectUrl) {
+    URL.revokeObjectURL(rewardPreviewObjectUrl);
+    rewardPreviewObjectUrl = null;
+  }
 }
 
-function redeemRewardPickPhoto(rewardId) {
+function setRewardSubmissionPanelVisible(show) {
+  const panel = document.getElementById("reward-submit-panel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !show);
+}
+
+function resetRewardSubmissionFormOnly() {
+  const fi = document.getElementById("reward-qr-photo-input");
+  const prevWrap = document.getElementById("reward-photo-preview-wrap");
+  const prevImg = document.getElementById("reward-photo-preview");
+  const nameEl = document.getElementById("reward-photo-filename");
+  const sendBtn = document.getElementById("reward-submit-send-btn");
+  if (fi) fi.value = "";
+  revokeRewardPreviewUrl();
+  rewardSubmissionFile = null;
+  if (prevWrap) prevWrap.classList.add("hidden");
+  if (prevImg) prevImg.removeAttribute("src");
+  if (nameEl) nameEl.textContent = "";
+  if (sendBtn) sendBtn.disabled = true;
+}
+
+function showRewardSubmissionSuccess() {
+  document.getElementById("reward-submit-form-block")?.classList.add("hidden");
+  document.getElementById("reward-submit-success-block")?.classList.remove("hidden");
+  document.getElementById("reward-submit-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function restoreRewardSubmissionFormLayout() {
+  document.getElementById("reward-submit-form-block")?.classList.remove("hidden");
+  document.getElementById("reward-submit-success-block")?.classList.add("hidden");
+}
+
+/** Choose a catalog reward — opens submission section beneath the grid. */
+function beginRewardSubmission(reward) {
   const user = AuthService.currentUser();
   if (!user || normalizeRole(user.role) !== "household") {
     showToast("Only household users can redeem rewards.");
     return;
   }
-  pendingRedeemQrRewardId = rewardId;
-  bindRewardQrPhotoInputOnce();
-  document.getElementById("reward-qr-photo-input")?.click();
+  if (!reward || !reward.id) return;
+  restoreRewardSubmissionFormLayout();
+  rewardSubmissionSelection = { id: reward.id, display: reward.display, cost: reward.cost };
+
+  const summary = document.getElementById("reward-submit-selected");
+  if (summary) {
+    summary.textContent = `You chose: ${String(reward.display)} · ${Number(reward.cost) || 0} EcoPoints. Add your QR photo below, then tap Send.`;
+  }
+  resetRewardSubmissionFormOnly();
+
+  const catalogPanel = document.getElementById("panel-catalog");
+  if (catalogPanel?.classList.contains("hidden") && typeof window.showRewardTab === "function") {
+    const catTab = document.querySelector("#screen-rewards .log-form-tabs .log-tab");
+    window.showRewardTab("catalog", catTab || undefined);
+  }
+  setRewardSubmissionPanelVisible(true);
+  window.requestAnimationFrame(() => {
+    document.getElementById("reward-submit-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
 }
 
-async function submitRewardRedemptionWithPhoto(rewardId, file) {
+function cancelRewardSubmission() {
+  rewardSubmissionSelection = null;
+  resetRewardSubmissionFormOnly();
+  restoreRewardSubmissionFormLayout();
+  setRewardSubmissionPanelVisible(false);
+}
+
+function rewardSubmissionDone() {
+  cancelRewardSubmission();
+}
+
+let rewardRewardsFlowWiredOnce = false;
+function wireRewardSubmissionFlowOnce() {
+  if (rewardRewardsFlowWiredOnce) return;
+  rewardRewardsFlowWiredOnce = true;
+
+  const fi = document.getElementById("reward-qr-photo-input");
+  fi?.addEventListener("change", () => {
+    revokeRewardPreviewUrl();
+    rewardSubmissionFile = fi.files?.[0] || null;
+    const nameEl = document.getElementById("reward-photo-filename");
+    const sendBtn = document.getElementById("reward-submit-send-btn");
+    const prevWrap = document.getElementById("reward-photo-preview-wrap");
+    const prevImg = document.getElementById("reward-photo-preview");
+    if (!rewardSubmissionFile) {
+      resetRewardSubmissionFormOnly();
+      return;
+    }
+    if (nameEl) nameEl.textContent = rewardSubmissionFile.name || "Photo selected";
+    if (rewardSubmissionFile.type && !/^image\//i.test(rewardSubmissionFile.type)) {
+      showToast("Please choose an image file.");
+      resetRewardSubmissionFormOnly();
+      return;
+    }
+    rewardPreviewObjectUrl = URL.createObjectURL(rewardSubmissionFile);
+    if (prevImg) prevImg.src = rewardPreviewObjectUrl;
+    if (prevWrap) prevWrap.classList.remove("hidden");
+    if (sendBtn) sendBtn.disabled = false;
+  });
+
+  document.getElementById("reward-submit-send-btn")?.addEventListener("click", async () => {
+    const user = AuthService.currentUser();
+    if (!user || normalizeRole(user.role) !== "household") {
+      showToast("Only household users can redeem rewards.");
+      return;
+    }
+    if (!rewardSubmissionSelection || !rewardSubmissionFile) {
+      showToast("Choose a reward and a QR photo first.");
+      return;
+    }
+    const sendBtn = document.getElementById("reward-submit-send-btn");
+    if (sendBtn) sendBtn.disabled = true;
+    const res = await submitRewardRedemptionWithPhoto(rewardSubmissionSelection.id, rewardSubmissionFile, {
+      suppressSuccessToast: true
+    });
+    if (!res?.ok && sendBtn) sendBtn.disabled = false;
+    if (res?.ok) showRewardSubmissionSuccess();
+  });
+
+  document.getElementById("reward-submit-cancel-btn")?.addEventListener("click", () => cancelRewardSubmission());
+  document.getElementById("reward-submit-done-btn")?.addEventListener("click", () => rewardSubmissionDone());
+}
+
+async function submitRewardRedemptionWithPhoto(rewardId, file, opts = {}) {
+  const suppressSuccessToast = Boolean(opts.suppressSuccessToast);
   const user = AuthService.currentUser();
   if (!user || normalizeRole(user.role) !== "household") {
     showToast("Only household users can redeem rewards.");
-    return;
+    return { ok: false };
   }
   if (apiMode && getToken()) {
     try {
@@ -2629,26 +2738,36 @@ async function submitRewardRedemptionWithPhoto(rewardId, file) {
       fd.append("photo", file, file.name || "qr.jpg");
       const data = await apiFetchMultipart("/rewards/redeem", fd);
       await syncFromServer();
-      showToast(`Sent to admin with your QR photo · ${data.reward?.display ?? "Reward"} · ${Number(data.reward?.cost || 0)} pts deducted`);
+      if (!suppressSuccessToast) {
+        showToast(`Sent · ${data.reward?.display ?? "Reward"} · ${Number(data.reward?.cost || 0)} pts deducted`);
+      }
       refreshUI();
+      return { ok: true, data };
     } catch (e) {
       showToast(e.message || "Could not submit redemption.");
+      return { ok: false };
     }
-    return;
   }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const result = RewardsService.redeem(rewardId, user, reader.result);
-    if (!result.ok) {
-      showToast(result.message);
-      return;
-    }
-    showToast(`Submitted (offline demo) · ${result.reward.display}`);
-    persistState();
-    refreshUI();
-  };
-  reader.onerror = () => showToast("Could not read the image.");
-  reader.readAsDataURL(file);
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = RewardsService.redeem(rewardId, user, reader.result);
+      if (!result.ok) {
+        showToast(result.message);
+        resolve({ ok: false });
+        return;
+      }
+      if (!suppressSuccessToast) showToast(`Submitted (offline demo) · ${result.reward.display}`);
+      persistState();
+      refreshUI();
+      resolve({ ok: true });
+    };
+    reader.onerror = () => {
+      showToast("Could not read the image.");
+      resolve({ ok: false });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 async function renderAdminRewardQueue() {
@@ -2746,23 +2865,41 @@ async function downloadAdminRewardRedemptionPhoto(id) {
   }
 }
 
+function bindRewardCatalogPickButtons(grid, catalog) {
+  if (!grid || !catalog?.length) return;
+  const buttons = grid.querySelectorAll("button.bb-reward-pick");
+  buttons.forEach((btn, idx) => {
+    const reward = catalog[idx];
+    if (!reward) return;
+    btn.addEventListener("click", e => {
+      e.preventDefault();
+      e.stopPropagation();
+      beginRewardSubmission({
+        id: reward.id,
+        display: String(reward.display),
+        cost: Number(reward.cost) || 0
+      });
+    });
+  });
+}
+
 function initRewards() {
   renderRewardsBarangay();
+  wireRewardSubmissionFlowOnce();
   const grid = document.getElementById("rewards-grid");
   if (!grid) return;
-  bindRewardQrPhotoInputOnce();
   const paint = catalog => {
     grid.innerHTML = catalog
-      .map(r => {
-        const idLit = JSON.stringify(String(r.id));
-        return `
-    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-      <div><strong>${r.display}</strong><br/><small>${r.cost} pts</small></div>
-      <button type="button" class="btn btn-outline" onclick="redeemRewardPickPhoto(${idLit})">Redeem (QR)</button>
+      .map(
+        r => `
+    <div class="card bb-reward-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><strong>${escapeAdminText(r.display)}</strong><br/><small>${Number(r.cost) || 0} pts</small></div>
+      <button type="button" class="btn btn-primary bb-reward-pick">Redeem with QR photo</button>
     </div>
-  `;
-      })
+  `
+      )
       .join("");
+    bindRewardCatalogPickButtons(grid, catalog);
   };
   if (apiMode && getToken()) {
     apiFetch("/rewards")
@@ -3864,7 +4001,8 @@ window.renderNotifications = renderNotifications;
 window.initGuide = initGuide;
 window.initRewards = initRewards;
 window.handleCollectorDecision = handleCollectorDecision;
-window.redeemRewardPickPhoto = redeemRewardPickPhoto;
+window.beginRewardSubmission = beginRewardSubmission;
+window.cancelRewardSubmission = cancelRewardSubmission;
 window.selectModalType = selectModalType;
 window.logout = logout;
 window.cancelLogSubmission = cancelLogSubmission;
