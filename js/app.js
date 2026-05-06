@@ -1377,6 +1377,7 @@ async function runInitialSessionHydrationFromToken() {
 
     if (AuthService.currentUser()) {
       window.clearTimeout(peelIfStillOnSplash);
+      recoverSplashIfLoggedIn();
       refreshUI();
       if (raced.timedOut) {
         showToast("Server slow — showing saved data until we reconnect.");
@@ -2007,15 +2008,33 @@ function wireSplashTapToSkip() {
   sp.setAttribute("role", "button");
   sp.setAttribute("tabindex", "0");
   sp.setAttribute("aria-label", "Skip to sign in");
+  try {
+    sp.style.touchAction = "manipulation";
+  } catch (_e) {
+    /* ignore */
+  }
   const go = () => {
     try {
-      if (AuthService.currentUser()) return;
+      if (AuthService.currentUser()) {
+        recoverSplashIfLoggedIn();
+        return;
+      }
       forceShowLoginShell();
     } catch (_e) {
       /* ignore */
     }
   };
   sp.addEventListener("click", go);
+  /** Some mobile WebViews are slow or flaky delivering `click` on full-screen sections; `touchend` is reliable. */
+  sp.addEventListener(
+    "touchend",
+    e => {
+      if (!sp.classList.contains("active")) return;
+      e.preventDefault();
+      go();
+    },
+    { passive: false }
+  );
   sp.addEventListener("keydown", e => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -2047,6 +2066,25 @@ function initSplash(_restoredSession) {
 
   if (suppressSplashTransitions || AuthService.currentUser()) {
     recoverSplashIfLoggedIn();
+    /**
+     * `/login` and `/dashboard` guests set `suppressSplashTransitions` and already call `showLoginFormOnly`.
+     * If splash is still active (race or partial init), never leave guests trapped on the splash.
+     */
+    if (!AuthService.currentUser()) {
+      const splash = document.getElementById("screen-splash");
+      const auth = document.getElementById("screen-auth");
+      if (splash?.classList.contains("active") && (!auth || !auth.classList.contains("active"))) {
+        showLoginFormOnly();
+        if (pathRoutingEnabled()) {
+          try {
+            window.history.replaceState({ screen: "auth", authenticated: false }, "", ROUTES.LOGIN);
+          } catch (_e) {
+            /* ignore */
+          }
+        }
+        if (auth) resetViewportScroll(auth);
+      }
+    }
     return;
   }
 
@@ -2058,7 +2096,11 @@ function initSplash(_restoredSession) {
   scheduleSplashAuthFailsafes();
 
   window.setTimeout(() => {
-    if (AuthService.currentUser()) return;
+    const u = AuthService.currentUser();
+    if (u) {
+      recoverSplashIfLoggedIn();
+      return;
+    }
 
     showLoginFormOnly();
     if (pathRoutingEnabled()) {
