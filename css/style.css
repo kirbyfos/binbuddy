@@ -198,6 +198,12 @@ a { text-decoration: none; color: inherit; }
   min-height: 100vh;
   min-height: 100dvh;
   padding-bottom: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#screen-splash:focus-visible {
+  outline: 2px solid rgba(255,255,255,0.85);
+  outline-offset: 4px;
 }
 #screen-splash.active {
   display: flex;
@@ -252,6 +258,17 @@ a { text-decoration: none; color: inherit; }
 @keyframes load {
   from { width: 0%; }
   to   { width: 100%; }
+}
+.splash-skip-hint {
+  margin: 14px 20px 0;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: center;
+  font-weight: 600;
+  font-family: var(--font-body);
+  pointer-events: none;
+  user-select: none;
 }
 .splash-sub {
   color: rgba(255,255,255,0.6);

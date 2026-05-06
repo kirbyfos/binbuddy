@@ -1266,42 +1266,70 @@ function uiApplySuccessfulServerHydration() {
 }
 
 async function runInitialSessionHydrationFromToken() {
-  const syncPromise = syncFromServer({
-    perRequestTimeoutMs: BOOTSTRAP_SYNC_PER_REQUEST_MS
-  }).then(ok => ({
-    finished: true,
-    ok: Boolean(ok)
-  }));
-
-  const raced = await Promise.race([
-    syncPromise,
-    sleep(BOOTSTRAP_SYNC_UI_WAIT_MS).then(() => ({ timedOut: true }))
-  ]);
-
-  if (raced.finished && raced.ok) {
-    uiApplySuccessfulServerHydration();
-    return;
-  }
-
-  void syncPromise.then(outcome => {
-    if (outcome && outcome.ok) uiApplySuccessfulServerHydration();
-  });
-
-  apiMode = false;
-
-  if (AuthService.currentUser()) {
-    refreshUI();
-    if (raced.timedOut) {
-      showToast("Server slow — showing saved data until we reconnect.");
+  /** While JWT sync runs, don't block the sign-in screen behind the splash. */
+  const peelIfStillOnSplash = window.setTimeout(() => {
+    try {
+      if (AuthService.currentUser()) return;
+      const splash = document.getElementById("screen-splash");
+      if (splash?.classList.contains("active")) forceShowLoginShell();
+    } catch (_e) {
+      /* ignore */
     }
-    return;
-  }
+  }, 900);
 
-  attachLoginPhase();
-  showLoginFormOnly();
-  suppressSplashTransitions = true;
-  showToast("Still connecting… If this persists, tap Check connection on the sign-in page.");
-  refreshUI();
+  try {
+    const syncPromise = syncFromServer({
+      perRequestTimeoutMs: BOOTSTRAP_SYNC_PER_REQUEST_MS
+    }).then(ok => ({
+      finished: true,
+      ok: Boolean(ok)
+    }));
+
+    const raced = await Promise.race([
+      syncPromise,
+      sleep(BOOTSTRAP_SYNC_UI_WAIT_MS).then(() => ({ timedOut: true }))
+    ]);
+
+    if (raced.finished && raced.ok) {
+      window.clearTimeout(peelIfStillOnSplash);
+      uiApplySuccessfulServerHydration();
+      return;
+    }
+
+    void syncPromise.then(outcome => {
+      if (outcome && outcome.ok) {
+        window.clearTimeout(peelIfStillOnSplash);
+        uiApplySuccessfulServerHydration();
+      }
+    });
+
+    apiMode = false;
+
+    if (AuthService.currentUser()) {
+      window.clearTimeout(peelIfStillOnSplash);
+      refreshUI();
+      if (raced.timedOut) {
+        showToast("Server slow — showing saved data until we reconnect.");
+      }
+      return;
+    }
+
+    window.clearTimeout(peelIfStillOnSplash);
+    attachLoginPhase();
+    showLoginFormOnly();
+    suppressSplashTransitions = true;
+    showToast("Still connecting… If this persists, tap Check connection on the sign-in page.");
+    refreshUI();
+  } catch (err) {
+    window.clearTimeout(peelIfStillOnSplash);
+    console.error("[runInitialSessionHydrationFromToken]", err);
+    try {
+      attachLoginPhase();
+      forceShowLoginShell();
+    } catch (_e) {
+      /* ignore */
+    }
+  }
 }
 
 /** When the server accepted auth but full sync failed (network/503), keep the JWT and mirror API user into AppState so the UI can load. */
@@ -1837,7 +1865,7 @@ function forceShowLoginShell() {
 
 /** Multiple deadlines — hosting/CDN must never leave only the animated splash visible. */
 function scheduleSplashAuthFailsafes() {
-  [320, 900, 2200].forEach(ms => {
+  [120, 400, 850, 1700, 3500].forEach(ms => {
     window.setTimeout(() => {
       try {
         if (suppressSplashTransitions) return;
@@ -1853,8 +1881,48 @@ function scheduleSplashAuthFailsafes() {
   });
 }
 
+/** If we have a restored user but the splash is still showing, recover (e.g. routing exception). */
+function recoverSplashIfLoggedIn() {
+  try {
+    const u = AuthService.currentUser();
+    if (!u) return;
+    const sp = document.getElementById("screen-splash");
+    if (!sp?.isConnected || !sp.classList.contains("active")) return;
+    suppressSplashTransitions = true;
+    finalizeAuthenticatedEntry(RoleGuard.getHomeScreen(u.role), { replaceHistory: true });
+  } catch (err) {
+    console.error("[recoverSplashIfLoggedIn]", err);
+  }
+}
+
+function wireSplashTapToSkip() {
+  const sp = document.getElementById("screen-splash");
+  if (!sp || sp.dataset.bbSkipWired) return;
+  sp.dataset.bbSkipWired = "1";
+  sp.setAttribute("role", "button");
+  sp.setAttribute("tabindex", "0");
+  sp.setAttribute("aria-label", "Skip to sign in");
+  const go = () => {
+    try {
+      if (AuthService.currentUser()) return;
+      forceShowLoginShell();
+    } catch (_e) {
+      /* ignore */
+    }
+  };
+  sp.addEventListener("click", go);
+  sp.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      go();
+    }
+  });
+}
+
 function initSplash(_restoredSession) {
   const splashScreen = document.getElementById("screen-splash");
+  wireSplashTapToSkip();
+
   if (!splashScreen && !AuthService.currentUser()) {
     showLoginFormOnly();
     return;
@@ -1862,6 +1930,7 @@ function initSplash(_restoredSession) {
   if (!splashScreen) return;
 
   if (suppressSplashTransitions || AuthService.currentUser()) {
+    recoverSplashIfLoggedIn();
     return;
   }
 
@@ -1881,7 +1950,18 @@ function initSplash(_restoredSession) {
     }
     const ae = document.getElementById("screen-auth");
     if (ae) resetViewportScroll(ae);
-  }, 550);
+  }, 220);
+
+  window.setTimeout(() => {
+    try {
+      if (suppressSplashTransitions) return;
+      if (AuthService.currentUser()) return;
+      const splash = document.getElementById("screen-splash");
+      if (splash?.classList.contains("active")) forceShowLoginShell();
+    } catch (_e) {
+      /* ignore */
+    }
+  }, 2800);
 }
 
 function syncTrackScreenSubView(screen, trackSubView) {
