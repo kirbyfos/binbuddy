@@ -34,8 +34,20 @@ function sleep(ms) {
   });
 }
 
+/** Tutorial / typo URLs saved in meta or localStorage break discovery — strip them like empty. */
+function isPlaceholderApiBase(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (!s) return false;
+  if (s.includes("your-api-host")) return true;
+  if (s.includes("example.com")) return true;
+  if (/\bchangeme\b/.test(s) || /\bplaceholder\b/.test(s)) return true;
+  return false;
+}
+
 function normalizeApiBase(raw) {
-  const s = String(raw || "").trim().replace(/\/+$/, "");
+  const trimmed = String(raw || "").trim();
+  if (!trimmed || isPlaceholderApiBase(trimmed)) return "";
+  const s = trimmed.replace(/\/+$/, "");
   if (!s) return "";
   return s.endsWith("/api") ? s : `${s}/api`;
 }
@@ -131,16 +143,20 @@ function candidateApiBases() {
 }
 
 /** Health check for one API base. Keep timeout short — many candidates may be tried in parallel. */
-async function probeApiBase(base, timeoutMs = 900) {
+async function probeApiBase(base, timeoutMs = 1600) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${base}/health`, { signal: ctrl.signal, headers: { Accept: "application/json" } });
     if (!res.ok) return false;
-    const ct = String(res.headers.get("content-type") || "").toLowerCase();
-    if (!ct.includes("application/json")) return false;
-    const data = await res.json().catch(() => ({}));
-    return Boolean(data && (data.ok === true || data.success === true));
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      return false;
+    }
+    return Boolean(data && typeof data === "object" && (data.ok === true || data.success === true));
   } catch (_e) {
     return false;
   } finally {
@@ -166,8 +182,8 @@ async function getApiBase() {
     /**
      * Parallel probes with a strict wall clock — static hosts fail fast so startup + login are not delayed.
      */
-    const API_BASE_PROBE_BUDGET_MS = 1100;
-    const perProbeMs = 450;
+    const API_BASE_PROBE_BUDGET_MS = 2800;
+    const perProbeMs = 1600;
     const probeBatch = Promise.all(candidates.map(c => probeApiBase(c, perProbeMs).then(ok => ({ c, ok })))).then(
       rows => ({ kind: "rows", rows })
     );
@@ -1042,8 +1058,21 @@ async function apiFetch(path, options = {}) {
     const base = await getApiBase();
     const res = await fetch(`${base}${path}`, { ...fetchOpts, headers, signal: ctrl.signal });
     const contentType = String(res.headers.get("content-type") || "").toLowerCase();
-    const isJson = contentType.includes("application/json");
-    const data = isJson ? await res.json().catch(() => ({})) : {};
+    const text = await res.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = {};
+    }
+    const headerSaysJson = contentType.includes("json");
+    const bodyLooksJson =
+      typeof data === "object" &&
+      data !== null &&
+      !Array.isArray(data) &&
+      text &&
+      /^\s*\{/.test(text);
+    const isJson = headerSaysJson || bodyLooksJson;
     if (!res.ok) {
       const detail = summarizeApiValidationMessage(data) || data.message;
       const err = new Error(detail || res.statusText || "Request failed");
@@ -3650,7 +3679,11 @@ function initAuth() {
     setConnStatus("Checking connection…");
     try {
       await getApiBase();
-      const health = await apiFetch("/health", { method: "GET", timeoutMs: 12000 });
+      let health = await apiFetch("/health", { method: "GET", timeoutMs: 12000 });
+      if (health?.ok && !health?.dbConnected) {
+        await sleep(900);
+        health = await apiFetch("/health", { method: "GET", timeoutMs: 12000 });
+      }
       apiProbesHadHealthyHit = true;
       tryShowAuthApiHint();
       const ok = Boolean(health?.dbConnected);

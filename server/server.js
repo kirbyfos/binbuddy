@@ -13,6 +13,7 @@ const webRoot = path.join(__dirname, '..');
 const JWT_SECRET = process.env.JWT_SECRET || 'binbuddy-dev-secret';
 let dbConnected = false;
 let lastDbError = '';
+let lastDbPingMs = null;
 
 function withTimeout(promise, ms, label) {
     return Promise.race([
@@ -31,7 +32,12 @@ const usersColumnInfo = {
 // --- MIDDLEWARE ---
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(webRoot, { index: 'index.html', extensions: ['html'] }));
+const staticMw = express.static(webRoot, { index: 'index.html', extensions: ['html'] });
+app.use((req, res, next) => {
+    const p = String(req.path || '');
+    if (p === '/api' || p.startsWith('/api/')) return next();
+    return staticMw(req, res, next);
+});
 
 const ALLOWED_ROLES = new Set(['household', 'collector', 'admin', 'user']);
 const normalizeRole = (role) => {
@@ -146,6 +152,42 @@ const poolConfig = {
 if (sslOptions !== undefined) poolConfig.ssl = sslOptions;
 
 const pool = mysql.createPool(poolConfig);
+
+/** Non-blocking ping so /api/health responds immediately (client probes use sub-second timeouts). */
+function kickDbConnectivityProbe() {
+    const pingMs = Number(process.env.DB_PING_TIMEOUT_MS || 12000);
+    const t0 = Date.now();
+    void withTimeout(pool.query('SELECT 1'), pingMs, 'MySQL ping')
+        .then(() => {
+            dbConnected = true;
+            lastDbError = '';
+            lastDbPingMs = Date.now() - t0;
+        })
+        .catch((e) => {
+            dbConnected = false;
+            lastDbError = e?.message || String(e);
+            lastDbPingMs = null;
+        });
+}
+
+app.get('/api/health', (_req, res) => {
+    kickDbConnectivityProbe();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+        success: true,
+        ok: true,
+        message: 'BinBuddy backend is running',
+        dbConnected,
+        ...(lastDbPingMs != null ? { dbPingMs: lastDbPingMs } : {}),
+        dbError: process.env.NODE_ENV === 'production' && !dbConnected ? 'unavailable' : lastDbError || undefined,
+        env: {
+            hasDbHost: Boolean(process.env.DB_HOST),
+            dbName: process.env.DB_NAME || 'defaultdb',
+            dbPort: Number(process.env.DB_PORT || 17100),
+            ssl: sslDisabled ? 'off' : fs.existsSync(caPath) ? 'ca.pem' : 'default-trust-store'
+        }
+    });
+});
 
 const supportsUsersColumn = (name) => usersColumnInfo.loaded && usersColumnInfo.set.has(name);
 
@@ -1099,39 +1141,6 @@ app.get('/api/admin/export.csv', authRequired, requireDb, requireRoles('admin'),
 
 app.post('/api/admin/broadcast', authRequired, (_req, res) => res.json({ recipients: 0 }));
 
-app.get('/api/health', async (_req, res) => {
-    const pingMs = Number(process.env.DB_PING_TIMEOUT_MS || 12000);
-    let pingOk = false;
-    let pingMsElapsed = null;
-    let pingErr = '';
-    const t0 = Date.now();
-    try {
-        await withTimeout(pool.query('SELECT 1'), pingMs, 'MySQL ping');
-        pingOk = true;
-        pingMsElapsed = Date.now() - t0;
-        dbConnected = true;
-        lastDbError = '';
-    } catch (e) {
-        dbConnected = false;
-        pingErr = e?.message || String(e);
-        lastDbError = pingErr;
-    }
-    res.json({
-        success: true,
-        ok: true,
-        message: 'BinBuddy backend is running',
-        dbConnected: pingOk,
-        dbPingMs: pingMsElapsed,
-        dbError: process.env.NODE_ENV === 'production' && !pingOk ? 'unavailable' : pingErr || undefined,
-        env: {
-            hasDbHost: Boolean(process.env.DB_HOST),
-            dbName: process.env.DB_NAME || 'defaultdb',
-            dbPort: Number(process.env.DB_PORT || 17100),
-            ssl: sslDisabled ? 'off' : fs.existsSync(caPath) ? 'ca.pem' : 'default-trust-store'
-        }
-    });
-});
-
 app.get('/', (_req, res) => {
     res.sendFile(path.join(webRoot, 'index.html'));
 });
@@ -1139,6 +1148,7 @@ app.get('/', (_req, res) => {
 const PORT = process.env.PORT || 3000;
 
 const server = app.listen(PORT, () => {
+    kickDbConnectivityProbe();
     console.log(`✅ Server running on http://localhost:${PORT}`);
     console.log(`📡 Ready for BinBuddy operations...`);
 });
