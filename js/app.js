@@ -1868,16 +1868,31 @@ function renderLeaderboard() {
   const users = AppState.users
     .filter(u => normalizeRole(u.role) === "household")
     .slice()
-    .sort((a, b) => b.ecoPoints - a.ecoPoints)
-    .slice(0, 10);
-  const el = document.getElementById("leaderboard-list");
-  if (!el) return;
-  el.innerHTML = users.map((u, i) => `
+    .sort((a, b) => (Number(b.ecoPoints) || 0) - (Number(a.ecoPoints) || 0))
+    .slice(0, 10)
+    .map((u, i) => ({ ...u, rank: i + 1, ecoPoints: Number(u.ecoPoints) || 0 }));
+
+  const lists = Array.from(document.querySelectorAll("[data-leaderboard-list]"));
+  if (!lists.length) return;
+
+  const html = users.length
+    ? users.map(u => `
     <div class="card" style="display:flex;justify-content:space-between">
-      <span>#${i + 1} ${u.name}</span>
+      <span>
+        ${(() => {
+          const r = computeHouseholdDisposalRank(u);
+          const isUnranked = !r || (Number(r.verifiedCount) || 0) <= 0 || r.rank == null;
+          return `${isUnranked ? "Unranked" : "#" + r.rank} ${u.name || "User"}`;
+        })()}
+      </span>
       <strong>${u.ecoPoints} pts</strong>
     </div>
-  `).join("");
+  `).join("")
+    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No ranked households yet.</p>`;
+
+  lists.forEach(el => {
+    el.innerHTML = html;
+  });
 }
 
 function renderProfile() {
@@ -1924,8 +1939,9 @@ function renderHomeDisposalRank() {
     return;
   }
   const r = computeHouseholdDisposalRank(user);
-  if (!r || r.rank == null) {
-    el.textContent = "Disposal rank —";
+  const verified = Number(r?.verifiedCount || 0);
+  if (!r || r.rank == null || verified <= 0) {
+    el.textContent = "Disposal rank Unranked · 0 verified disposals";
     return;
   }
   el.textContent = `Rank #${r.rank} of ${r.total} · ${r.verifiedCount} verified disposal${r.verifiedCount === 1 ? "" : "s"}`;
@@ -1939,8 +1955,17 @@ function renderRewardsBarangay() {
   const peso = Math.max(0, Math.round(pts / 10));
   const brgy = user ? getUserBarangayLabel(user) : NO_ADDRESS_LABEL;
   const r = user && normalizeRole(user.role) === "household" ? computeHouseholdDisposalRank(user) : null;
-  const rankBit = r && r.rank != null ? `Rank #${r.rank} of ${r.total}` : "Rank —";
+  const rankBit = r && r.rank != null && Number(r.verifiedCount || 0) > 0 ? `Rank #${r.rank} of ${r.total}` : "Unranked";
   el.textContent = `≈ ₱${peso} value · ${brgy} · ${rankBit} 🏆`;
+}
+
+function goToRewardsLeaderboard() {
+  goTo("rewards");
+  // Ensure tab switch runs after rewards screen activation/render cycle.
+  window.requestAnimationFrame(() => {
+    const btn = document.querySelector("#screen-rewards .log-form-tabs .log-tab:nth-child(2)");
+    if (typeof window.showRewardTab === "function") window.showRewardTab("leaderboard-tab", btn || undefined);
+  });
 }
 
 function renderCollectorView() {
@@ -3621,6 +3646,7 @@ window.submitLog = submitLog;
 window.increaseQty = increaseQty;
 window.decreaseQty = decreaseQty;
 window.renderLeaderboard = renderLeaderboard;
+window.goToRewardsLeaderboard = goToRewardsLeaderboard;
 window.renderNotifications = renderNotifications;
 window.initGuide = initGuide;
 window.initRewards = initRewards;

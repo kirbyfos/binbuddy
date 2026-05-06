@@ -247,7 +247,7 @@
           <div class="stat-icon">🎁</div>
           <div class="stat-label" style="font-size:0.82rem;font-weight:700">Rewards</div>
         </div>
-        <div class="stat-card" onclick="goTo('leaderboard')" style="cursor:pointer">
+        <div class="stat-card" onclick="goToRewardsLeaderboard()" style="cursor:pointer">
           <div class="stat-icon">🏆</div>
           <div class="stat-label" style="font-size:0.82rem;font-weight:700">Leaderboard</div>
         </div>
@@ -406,7 +406,7 @@
       <!-- Leaderboard Panel -->
       <div id="panel-leaderboard-tab" class="hidden">
         <div class="section-title" style="margin-top:16px">🏆 Barangay Leaderboard</div>
-        <div id="leaderboard-list"></div>
+        <div id="leaderboard-list-rewards" data-leaderboard-list></div>
       </div>
     </div>
   </section>
@@ -693,7 +693,7 @@
         <strong>🏆 Brgy. Holy Spirit</strong> leads in Lipa City with 72% segregation compliance!
       </div>
       <div class="section-title">🌟 Top BinBuddy – April 2026</div>
-      <div id="leaderboard-list">
+      <div id="leaderboard-list-screen" data-leaderboard-list>
         <!-- Rendered by JS on init -->
       </div>
     </div>
