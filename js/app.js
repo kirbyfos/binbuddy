@@ -18,6 +18,12 @@ const API_BASE_STORAGE_KEY = "binbuddy-api-base";
 let resolvedApiBase = null;
 let resolvingApiBasePromise = null;
 
+function sleep(ms) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function normalizeApiBase(raw) {
   const s = String(raw || "").trim().replace(/\/+$/, "");
   if (!s) return "";
@@ -94,9 +100,24 @@ async function getApiBase() {
       resolvedApiBase = "/api";
       return resolvedApiBase;
     }
-    /** Probe all candidates in parallel so we don't wait N × timeout when the first entries are dead (e.g. localhost meta on a deployed site). */
-    const results = await Promise.all(candidates.map(c => probeApiBase(c).then(ok => ({ c, ok }))));
-    const hit = results.find(r => r.ok);
+    /**
+     * Parallel probes, but never block startup forever: some browsers leave fetch pending despite AbortSignal.
+     * After API_BASE_PROBE_BUDGET_MS we pick the first candidate and let real requests fail fast with normal apiFetch timeouts.
+     */
+    const API_BASE_PROBE_BUDGET_MS = 5200;
+    const perProbeMs = 2200;
+    const probeBatch = Promise.all(candidates.map(c => probeApiBase(c, perProbeMs).then(ok => ({ c, ok })))).then(
+      rows => ({ kind: "rows", rows })
+    );
+    const raced = await Promise.race([
+      probeBatch,
+      sleep(API_BASE_PROBE_BUDGET_MS).then(() => ({ kind: "timeout" }))
+    ]);
+    if (raced.kind === "timeout") {
+      resolvedApiBase = candidates[0] || "/api";
+      return resolvedApiBase;
+    }
+    const hit = raced.rows.find(r => r.ok);
     resolvedApiBase = hit ? hit.c : candidates[0] || "/api";
     return resolvedApiBase;
   })();
@@ -1014,41 +1035,45 @@ async function apiFetchMultipart(path, formData, options = {}) {
   }
 }
 
-async function syncFromServer() {
+async function syncFromServer(options = {}) {
   const token = getToken();
   if (!token) {
     apiMode = false;
     return false;
   }
+  const tOpt = options.perRequestTimeoutMs != null ? { timeoutMs: options.perRequestTimeoutMs } : {};
   try {
-    const me = await apiFetch("/auth/me");
+    const me = await apiFetch("/auth/me", tOpt);
     const user = me.user;
     AppState.currentUserId = user.id;
     AppState.currentUserName = user.name;
     AppState.role = normalizeRole(user.role);
 
-    const logsData = await apiFetch("/logs");
-    AppState.logs = logsData.logs || [];
+    const role = normalizeRole(user.role);
 
-    const notifData = await apiFetch("/notifications");
-    AppState.notifications = (notifData.notifications || []).map(n => ({
-      text: n.text,
-      createdAt: n.createdAt || n.created_at,
-      userId: user.id
-    }));
+    const mapNotifications = nd =>
+      (nd.notifications || []).map(n => ({
+        text: n.text,
+        createdAt: n.createdAt || n.created_at,
+        userId: user.id
+      }));
 
-    if (normalizeRole(user.role) === "household") {
-      const lb = await apiFetch("/leaderboard");
+    if (role === "household") {
+      const [logsData, notifData, lb] = await Promise.all([
+        apiFetch("/logs", tOpt),
+        apiFetch("/notifications", tOpt),
+        apiFetch("/leaderboard", tOpt)
+      ]);
+      AppState.logs = logsData.logs || [];
+      AppState.notifications = mapNotifications(notifData);
       const rows = lb.leaderboard || [];
       const myIdStr = String(user.id);
       const myLb = rows.find(r => String(r.id) === myIdStr);
 
-      /** Disposal totals for me when API omits top-50 snapshot (fallback: my `/logs`). */
       const myLogsFiltered = AppState.logs.filter(
         l => String(l.userId) === myIdStr && isLogStatusCompleted(l.status)
       );
 
-      /** Single source of truth for EcoPoints/streak/contact; disposal stats prefer leaderboard row or local logs. */
       const meRow = {
         id: user.id,
         name: user.name || user.email || "User",
@@ -1088,7 +1113,18 @@ async function syncFromServer() {
           completedKg: Number(r.completedKg) || 0
         }));
       AppState.users = [meRow, ...others];
-    } else {
+      adminAnalyticsCache = null;
+    } else if (role === "admin") {
+      const [logsData, notifData, analytics, usersOrNull] = await Promise.all([
+        apiFetch("/logs", tOpt),
+        apiFetch("/notifications", tOpt),
+        apiFetch("/admin/analytics", tOpt),
+        apiFetch("/admin/users", tOpt).catch(() => null)
+      ]);
+      AppState.logs = logsData.logs || [];
+      AppState.notifications = mapNotifications(notifData);
+      adminAnalyticsCache = analytics;
+
       AppState.users = [
         {
           id: user.id,
@@ -1105,31 +1141,45 @@ async function syncFromServer() {
           password: ""
         }
       ];
-    }
-
-    if (normalizeRole(user.role) === "admin") {
-      adminAnalyticsCache = await apiFetch("/admin/analytics");
-      try {
-        const usersData = await apiFetch("/admin/users");
-        const mappedAdminUsers = (usersData.users || []).map(u => ({
-          id: u.id,
-          name: u.name,
-          email: u.email || "",
-          phoneNumber: u.phoneNumber || "",
-          address: u.address || "",
-          gender: u.gender || "",
-          role: u.role,
-          ecoPoints: Number(u.ecoPoints) || 0,
-          streak: Number(u.streak) || 0,
-          badge: u.badge || "",
-          barangay: u.barangay || "",
-          password: ""
-        }));
-        if (mappedAdminUsers.length) AppState.users = mappedAdminUsers;
-      } catch (_e) {
-        /* keep fallback single-user row */
-      }
+      const rawUsers = usersOrNull && usersOrNull.users ? usersOrNull.users : [];
+      const mappedAdminUsers = rawUsers.map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || "",
+        phoneNumber: u.phoneNumber || "",
+        address: u.address || "",
+        gender: u.gender || "",
+        role: u.role,
+        ecoPoints: Number(u.ecoPoints) || 0,
+        streak: Number(u.streak) || 0,
+        badge: u.badge || "",
+        barangay: u.barangay || "",
+        password: ""
+      }));
+      if (mappedAdminUsers.length) AppState.users = mappedAdminUsers;
     } else {
+      const [logsData, notifData] = await Promise.all([
+        apiFetch("/logs", tOpt),
+        apiFetch("/notifications", tOpt)
+      ]);
+      AppState.logs = logsData.logs || [];
+      AppState.notifications = mapNotifications(notifData);
+      AppState.users = [
+        {
+          id: user.id,
+          name: user.name,
+          email: user.email || "",
+          phoneNumber: user.phoneNumber || "",
+          address: user.address || "",
+          gender: user.gender || "",
+          role: user.role,
+          ecoPoints: user.ecoPoints || 0,
+          streak: user.streak || 0,
+          badge: user.badge || "",
+          barangay: user.barangay || "Holy Spirit",
+          password: ""
+        }
+      ];
       adminAnalyticsCache = null;
     }
 
@@ -1152,6 +1202,55 @@ async function syncFromServer() {
     }
     return false;
   }
+}
+
+/** First paint after reload: shorter per-request timeouts + UI not blocked on this promise. */
+const BOOTSTRAP_SYNC_PER_REQUEST_MS = 9000;
+const BOOTSTRAP_SYNC_UI_WAIT_MS = 22000;
+
+function uiApplySuccessfulServerHydration() {
+  suppressSplashTransitions = true;
+  runInitialUrlRouting(true);
+  refreshUI();
+}
+
+async function runInitialSessionHydrationFromToken() {
+  const syncPromise = syncFromServer({
+    perRequestTimeoutMs: BOOTSTRAP_SYNC_PER_REQUEST_MS
+  }).then(ok => ({
+    finished: true,
+    ok: Boolean(ok)
+  }));
+
+  const raced = await Promise.race([
+    syncPromise,
+    sleep(BOOTSTRAP_SYNC_UI_WAIT_MS).then(() => ({ timedOut: true }))
+  ]);
+
+  if (raced.finished && raced.ok) {
+    uiApplySuccessfulServerHydration();
+    return;
+  }
+
+  void syncPromise.then(outcome => {
+    if (outcome && outcome.ok) uiApplySuccessfulServerHydration();
+  });
+
+  apiMode = false;
+
+  if (AuthService.currentUser()) {
+    refreshUI();
+    if (raced.timedOut) {
+      showToast("Server slow — showing saved data until we reconnect.");
+    }
+    return;
+  }
+
+  attachLoginPhase();
+  showLoginFormOnly();
+  suppressSplashTransitions = true;
+  showToast("Still connecting… If this persists, tap Check connection on the sign-in page.");
+  refreshUI();
 }
 
 /** When the server accepted auth but full sync failed (network/503), keep the JWT and mirror API user into AppState so the UI can load. */
@@ -4272,19 +4371,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   safeInit("loadSession", () => loadSession());
   safeInit("historyGuard", () => HistoryGuard.init());
 
-  let restored = false;
-  if (getToken()) {
-    try {
-      restored = await syncFromServer();
-    } catch (err) {
-      console.error("[init:syncFromServer]", err);
-      restored = false;
-    }
-  }
-
-  safeInit("runInitialUrlRouting", () => runInitialUrlRouting(restored));
-
-  initSplash(restored);
+  safeInit("runInitialUrlRouting", () => runInitialUrlRouting(false));
+  /** Don't block painting on JWT sync — resolves stuck splash when API is slow or timing out (see BOOTSTRAP_SYNC_*). */
+  initSplash(Boolean(AuthService.currentUser()));
   setupWasteTypeSelectors();
   initNavigation();
   safeInit("helpTour", () => initHelpTour());
@@ -4296,6 +4385,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateQtyUI();
   resetLogInputs();
   refreshUI();
+
+  if (getToken()) {
+    void runInitialSessionHydrationFromToken().catch(err => console.error("[init:bootstrapHydration]", err));
+  }
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
