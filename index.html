@@ -393,6 +393,8 @@
       <!-- Rewards Catalog Panel -->
       <div id="panel-catalog">
         <div class="section-title" style="margin-top:16px">🎁 Rewards Catalog</div>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Redeem with a clear photo of your payment QR. The barangay admin downloads it to send your load, voucher, or e-money.</p>
+        <input type="file" id="reward-qr-photo-input" accept="image/*" capture="environment" hidden aria-hidden="true" tabindex="-1"/>
         <div class="rewards-grid" id="rewards-grid"></div>
       </div>
 
@@ -592,6 +594,9 @@
       <!-- Top Households -->
       <div class="section-title">🏆 Top Households</div>
       <div id="admin-users"></div>
+
+      <!-- Reward QR requests (filled by JS) -->
+      <div id="admin-reward-queue"></div>
 
       <!-- Admin Tools -->
       <div class="section-title">🛠️ Admin Tools</div>

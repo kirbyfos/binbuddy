@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = express();
@@ -62,6 +63,33 @@ const transient = {
         { id: 'RWD-VOUCH-100', display: 'P100 Voucher', cost: 1000 },
         { id: 'RWD-GCASH-75', display: 'P75 GCash', cost: 750 }
     ]
+};
+
+const redemptionUploadDir = path.join(__dirname, 'uploads', 'redemptions');
+if (!fs.existsSync(redemptionUploadDir)) {
+    fs.mkdirSync(redemptionUploadDir, { recursive: true });
+}
+
+const redemptionUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, redemptionUploadDir),
+        filename: (_req, file, cb) => {
+            const ext = path.extname(String(file.originalname || '')).slice(0, 8) || '.jpg';
+            cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
+        }
+    }),
+    limits: { fileSize: 8 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const ok = /^image\//i.test(file.mimetype || '');
+        cb(ok ? null : new Error('Please upload an image file (e.g. photo of QR).'), ok);
+    }
+});
+
+const redemptionPhotoUploadMw = (req, res, next) => {
+    redemptionUpload.single('photo')(req, res, (err) => {
+        if (err) return res.status(400).json({ message: String(err.message || 'Upload failed') });
+        next();
+    });
 };
 
 // --- DATABASE ---
@@ -195,6 +223,27 @@ async function ensureWasteLogsTable() {
     `);
 }
 
+/** Metadata for QR reward uploads; rows survive process restarts (see sql/mysql-workbench-reward-redemptions.sql). */
+async function ensureRewardRedemptionsTable() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS reward_redemptions (
+          redemption_id   VARCHAR(32) NOT NULL PRIMARY KEY,
+          user_id          INT UNSIGNED NOT NULL,
+          user_name       VARCHAR(200) NOT NULL,
+          user_email      VARCHAR(190) NOT NULL DEFAULT '',
+          reward_id       VARCHAR(64) NOT NULL,
+          reward_display  VARCHAR(200) NOT NULL,
+          cost_points     INT UNSIGNED NOT NULL,
+          photo_filename  VARCHAR(255) NOT NULL,
+          status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+          created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          KEY idx_reward_redemptions_user (user_id),
+          KEY idx_reward_redemptions_created (created_at),
+          KEY idx_reward_redemptions_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+}
+
 function mapWasteLogRow(row) {
     const toIso = (v) => (v ? new Date(v).toISOString() : null);
     return {
@@ -221,6 +270,7 @@ function mapWasteLogRow(row) {
         connection.release();
         await readUsersColumns();
         await ensureWasteLogsTable();
+        await ensureRewardRedemptionsTable();
         await ensureAdminAccount();
     } catch (err) {
         dbConnected = false;
@@ -605,7 +655,145 @@ app.get('/api/rewards', authRequired, (_req, res) => {
     res.json({ rewards: transient.rewards });
 });
 
-app.post('/api/rewards/redeem', authRequired, (_req, res) => res.json({ ok: true }));
+app.post(
+    '/api/rewards/redeem',
+    authRequired,
+    requireDb,
+    requireRoles('household'),
+    redemptionPhotoUploadMw,
+    async (req, res) => {
+        const unlinkIfFile = () => {
+            try {
+                if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            } catch (_e) {
+                /* ignore */
+            }
+        };
+        try {
+            if (!req.file) return res.status(400).json({ message: 'Photo required — take or choose a picture of your QR code.' });
+
+            const rewardId = String(req.body?.rewardId ?? req.body?.reward_id ?? '').trim();
+            const reward = transient.rewards.find((r) => r.id === rewardId);
+            if (!reward) {
+                unlinkIfFile();
+                return res.status(400).json({ message: 'Invalid reward.' });
+            }
+
+            if (!usersColumnInfo.loaded) await readUsersColumns();
+            const idCol = usersIdColumn();
+            const uid = req.user.id;
+            const [[urow]] = await pool.query(
+                `SELECT ${idCol} AS id, eco_points AS eco, full_name AS fullName, email FROM users WHERE ${idCol} = ? LIMIT 1`,
+                [uid]
+            );
+            if (!urow) {
+                unlinkIfFile();
+                return res.status(404).json({ message: 'User not found.' });
+            }
+
+            const pts = Number(urow.eco || 0);
+            if (pts < reward.cost) {
+                unlinkIfFile();
+                return res.status(400).json({ message: 'Not enough EcoPoints for this reward.' });
+            }
+
+            await pool.query(`UPDATE users SET eco_points = GREATEST(0, eco_points - ?) WHERE ${idCol} = ?`, [reward.cost, uid]);
+
+            const redemptionId = `RDM${crypto.randomBytes(8).toString('hex')}`;
+            const userName = String(urow.fullName || urow.email || req.user.email || 'User').trim();
+            const userEmail = String(urow.email || '');
+            try {
+                await pool.query(
+                    `INSERT INTO reward_redemptions (redemption_id, user_id, user_name, user_email, reward_id, reward_display, cost_points, photo_filename)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        redemptionId,
+                        urow.id,
+                        userName,
+                        userEmail,
+                        reward.id,
+                        reward.display,
+                        reward.cost,
+                        req.file.filename
+                    ]
+                );
+            } catch (insErr) {
+                console.error('❌ reward_redemptions INSERT:', insErr?.message || insErr);
+                unlinkIfFile();
+                try {
+                    await pool.query(`UPDATE users SET eco_points = eco_points + ? WHERE ${idCol} = ?`, [reward.cost, uid]);
+                } catch (_re) {
+                    /* best-effort rollback */
+                }
+                return res.status(500).json({
+                    message:
+                        'Could not save redemption. Run sql/mysql-workbench-reward-redemptions.sql on your database, then try again.'
+                });
+            }
+
+            return res.json({
+                ok: true,
+                reward: { id: reward.id, display: reward.display, cost: reward.cost },
+                redemptionId
+            });
+        } catch (err) {
+            unlinkIfFile();
+            console.error('❌ POST /rewards/redeem:', err?.message || err);
+            return res.status(500).json({ message: err?.message || 'Redemption failed' });
+        }
+    }
+);
+
+app.get('/api/admin/reward-redemptions', authRequired, requireDb, requireRoles('admin'), async (_req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `
+            SELECT
+              redemption_id AS id,
+              user_id AS userId,
+              user_name AS userName,
+              user_email AS userEmail,
+              reward_id AS rewardId,
+              reward_display AS rewardDisplay,
+              cost_points AS cost,
+              created_at AS createdAtRaw
+            FROM reward_redemptions
+            ORDER BY created_at DESC
+            LIMIT 300
+            `
+        );
+        const requests = rows.map((r) => ({
+            id: r.id,
+            userId: r.userId,
+            userName: r.userName,
+            userEmail: r.userEmail,
+            rewardId: r.rewardId,
+            rewardDisplay: r.rewardDisplay,
+            cost: r.cost,
+            createdAt: r.createdAtRaw ? new Date(r.createdAtRaw).toISOString() : null
+        }));
+        res.json({ requests });
+    } catch (_e) {
+        res.status(500).json({ requests: [], message: 'Could not load redemptions.' });
+    }
+});
+
+app.get('/api/admin/reward-redemptions/:id/photo', authRequired, requireDb, requireRoles('admin'), async (req, res) => {
+    try {
+        const rid = String(req.params.id || '');
+        const [[entry]] = await pool.query(
+            `SELECT photo_filename AS filename, user_name AS userName FROM reward_redemptions WHERE redemption_id = ? LIMIT 1`,
+            [rid]
+        );
+        if (!entry?.filename) return res.status(404).json({ message: 'Redemption not found.' });
+        const fp = path.join(redemptionUploadDir, entry.filename);
+        if (!fs.existsSync(fp)) return res.status(404).json({ message: 'Photo file missing.' });
+        const base = `${String(entry.userName || 'user').replace(/[^\w\-]+/g, '_')}-${rid}`;
+        res.download(fp, `${base}${path.extname(entry.filename) || '.jpg'}`);
+    } catch (_e) {
+        res.status(500).json({ message: 'Could not load file.' });
+    }
+});
 
 app.get('/api/admin/analytics', authRequired, requireDb, requireRoles('admin'), async (_req, res) => {
     try {

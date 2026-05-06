@@ -527,6 +527,8 @@ const AppState = {
   users: [],
   logs: [],
   redemptions: [],
+  /** Local-only: reward redeemals with QR proof for admin download (data URL). */
+  rewardQrSubmissions: [],
   notifications: []
 };
 
@@ -775,6 +777,46 @@ async function apiFetch(path, options = {}) {
   } catch (e) {
     if (e && e.name === "AbortError") {
       const err = new Error("Request timed out. Check that the BinBuddy server is running and reachable.");
+      err.status = 0;
+      err.code = "TIMEOUT";
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** POST multipart (e.g. QR photo). Do not set Content-Type — browser sets boundary. */
+async function apiFetchMultipart(path, formData, options = {}) {
+  const timeoutMs = options.timeoutMs != null ? Number(options.timeoutMs) : 60000;
+  const { timeoutMs: _omit, ...fetchOpts } = options;
+  const headers = { ...(fetchOpts.headers || {}) };
+  const tok = getToken();
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const base = await getApiBase();
+    const res = await fetch(`${base}${path}`, {
+      ...fetchOpts,
+      method: fetchOpts.method || "POST",
+      body: formData,
+      headers,
+      signal: ctrl.signal
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = summarizeApiValidationMessage(data) || data.message;
+      const err = new Error(detail || res.statusText || "Request failed");
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      const err = new Error("Upload timed out. Try a smaller image.");
       err.status = 0;
       err.code = "TIMEOUT";
       throw err;
@@ -1079,6 +1121,7 @@ function persistState() {
       users: AppState.users,
       logs: AppState.logs,
       redemptions: AppState.redemptions,
+      rewardQrSubmissions: AppState.rewardQrSubmissions,
       notifications: AppState.notifications
     })
   );
@@ -1091,6 +1134,7 @@ function loadState() {
     AppState.users = seed.users;
     AppState.logs = seed.logs;
     AppState.redemptions = seed.redemptions;
+    AppState.rewardQrSubmissions = [];
     AppState.notifications = seed.notifications;
     persistState();
     return;
@@ -1100,12 +1144,14 @@ function loadState() {
     AppState.users = parsed.users || [];
     AppState.logs = parsed.logs || [];
     AppState.redemptions = parsed.redemptions || [];
+    AppState.rewardQrSubmissions = parsed.rewardQrSubmissions || [];
     AppState.notifications = parsed.notifications || [];
   } catch (_err) {
     const fallback = buildSeedState();
     AppState.users = fallback.users;
     AppState.logs = fallback.logs;
     AppState.redemptions = fallback.redemptions;
+    AppState.rewardQrSubmissions = [];
     AppState.notifications = fallback.notifications;
     persistState();
   }
@@ -1296,20 +1342,33 @@ const RewardsService = {
       { id: "RWD-GCASH-75", name: "GCash", display: "₱75 GCash", cost: 750 }
     ];
   },
-  redeem(rewardId, user) {
+  redeem(rewardId, user, qrDataUrl = null) {
     const reward = this.catalog().find(r => r.id === rewardId);
     if (!reward) return { ok: false, message: "Reward not found." };
     if (!user) return { ok: false, message: "Login required." };
     if (user.ecoPoints < reward.cost) return { ok: false, message: "Not enough EcoPoints." };
     user.ecoPoints -= reward.cost;
+    const rdmId = `RDM${Date.now()}`;
     AppState.redemptions.unshift({
-      id: `RDM${Date.now()}`,
+      id: rdmId,
       userId: user.id,
       rewardId: reward.id,
       rewardName: reward.display,
       cost: reward.cost,
       createdAt: nowIso()
     });
+    if (qrDataUrl) {
+      AppState.rewardQrSubmissions.unshift({
+        id: rdmId,
+        userId: user.id,
+        userName: user.name || "User",
+        rewardId: reward.id,
+        rewardDisplay: reward.display,
+        cost: reward.cost,
+        qrDataUrl,
+        createdAt: nowIso()
+      });
+    }
     AppState.notifications.unshift({
       text: `Redeemed ${reward.display} for ${reward.cost} points.`,
       createdAt: nowIso(),
@@ -2522,18 +2581,187 @@ function initRecyclableChecker() {
   });
 }
 
+function escapeAdminText(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+let pendingRedeemQrRewardId = null;
+
+function bindRewardQrPhotoInputOnce() {
+  const fi = document.getElementById("reward-qr-photo-input");
+  if (!fi || fi.dataset.bbRewardQrBound === "1") return;
+  fi.dataset.bbRewardQrBound = "1";
+  fi.addEventListener("change", () => {
+    const file = fi.files && fi.files[0];
+    fi.value = "";
+    const rid = pendingRedeemQrRewardId;
+    pendingRedeemQrRewardId = null;
+    if (!file || !rid) return;
+    void submitRewardRedemptionWithPhoto(rid, file);
+  });
+}
+
+function redeemRewardPickPhoto(rewardId) {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "household") {
+    showToast("Only household users can redeem rewards.");
+    return;
+  }
+  pendingRedeemQrRewardId = rewardId;
+  bindRewardQrPhotoInputOnce();
+  document.getElementById("reward-qr-photo-input")?.click();
+}
+
+async function submitRewardRedemptionWithPhoto(rewardId, file) {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "household") {
+    showToast("Only household users can redeem rewards.");
+    return;
+  }
+  if (apiMode && getToken()) {
+    try {
+      const fd = new FormData();
+      fd.append("rewardId", rewardId);
+      fd.append("photo", file, file.name || "qr.jpg");
+      const data = await apiFetchMultipart("/rewards/redeem", fd);
+      await syncFromServer();
+      showToast(`Sent to admin with your QR photo · ${data.reward?.display ?? "Reward"} · ${Number(data.reward?.cost || 0)} pts deducted`);
+      refreshUI();
+    } catch (e) {
+      showToast(e.message || "Could not submit redemption.");
+    }
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = RewardsService.redeem(rewardId, user, reader.result);
+    if (!result.ok) {
+      showToast(result.message);
+      return;
+    }
+    showToast(`Submitted (offline demo) · ${result.reward.display}`);
+    persistState();
+    refreshUI();
+  };
+  reader.onerror = () => showToast("Could not read the image.");
+  reader.readAsDataURL(file);
+}
+
+async function renderAdminRewardQueue() {
+  const wrap = document.getElementById("admin-reward-queue");
+  if (!wrap) return;
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") {
+    wrap.innerHTML = "";
+    wrap.onclick = null;
+    return;
+  }
+  if (apiMode && getToken()) {
+    try {
+      const data = await apiFetch("/admin/reward-redemptions");
+      const rows = data.requests || [];
+      wrap.innerHTML =
+        `<div class="section-title" style="margin-top:16px">🎁 Reward requests (QR photos)</div>` +
+        "<p style=\"font-size:0.82rem;color:var(--text-muted);margin:0 0 12px\">Households attach a QR image; download and fulfill outside the app.</p>" +
+        (rows.length
+          ? rows
+              .map(
+                r => `
+        <div class="card" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div style="min-width:0">
+            <strong>${escapeAdminText(r.userName || "User")}</strong>
+            <small style="display:block;color:var(--text-muted)">${escapeAdminText(r.rewardDisplay || "")} · ${Number(r.cost || 0)} pts · ID ${escapeAdminText(r.id)}</small>
+            <small style="display:block;color:var(--text-muted)">${escapeAdminText(formatDateTime(r.createdAt))}</small>
+          </div>
+          <button type="button" class="btn btn-outline" style="flex-shrink:0" data-rdm-dl="${escapeAdminText(r.id)}">⬇️ Download QR photo</button>
+        </div>`
+              )
+              .join("")
+          : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No reward requests yet.</p>`);
+      wrap.onclick = e => {
+        const btn = e.target.closest("[data-rdm-dl]");
+        if (!btn) return;
+        void downloadAdminRewardRedemptionPhoto(btn.getAttribute("data-rdm-dl"));
+      };
+    } catch (_e) {
+      wrap.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted)">Could not load reward requests.</p>`;
+      wrap.onclick = null;
+    }
+    return;
+  }
+  const rows = AppState.rewardQrSubmissions || [];
+  wrap.innerHTML =
+    `<div class="section-title" style="margin-top:16px">🎁 Reward requests (QR · offline demo)</div>` +
+    (rows.length
+      ? rows
+          .map(
+            r => `
+    <div class="card" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <div style="min-width:0">
+        <strong>${escapeAdminText(r.userName || "User")}</strong>
+        <small style="display:block;color:var(--text-muted)">${escapeAdminText(r.rewardDisplay || "")} · ${Number(r.cost || 0)} pts</small>
+        <small style="display:block;color:var(--text-muted)">${escapeAdminText(formatDateTime(r.createdAt))}</small>
+      </div>
+      <a class="btn btn-outline" style="flex-shrink:0;text-decoration:none" download="qr-${escapeAdminText(String(r.id).replace(/[^\w-]+/g, "_"))}.jpg" href="${String(r.qrDataUrl || "").replace(/&/g, "&amp;")}">⬇️ Download QR photo</a>
+    </div>`
+          )
+          .join("")
+      : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No reward requests yet.</p>`);
+  wrap.onclick = null;
+}
+
+async function downloadAdminRewardRedemptionPhoto(id) {
+  if (!id || !getToken()) {
+    showToast("Login required.");
+    return;
+  }
+  try {
+    const base = await getApiBase();
+    const res = await fetch(`${base}/admin/reward-redemptions/${encodeURIComponent(id)}/photo`, {
+      headers: { Authorization: `Bearer ${getToken()}` }
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      showToast(j.message || "Download failed.");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    let name = `redemption-${id}.jpg`;
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = /filename\*=UTF-8''([^;\n]+)|filename="([^"]+)"/i.exec(cd);
+    const raw = m ? decodeURIComponent((m[1] || m[2] || "").trim()) : "";
+    if (raw) name = raw;
+    a.download = name.replace(/[/\\?%*:|"<>]/g, "_");
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (_e) {
+    showToast("Download failed.");
+  }
+}
+
 function initRewards() {
   renderRewardsBarangay();
   const grid = document.getElementById("rewards-grid");
   if (!grid) return;
+  bindRewardQrPhotoInputOnce();
   const paint = catalog => {
     grid.innerHTML = catalog
-      .map(r => `
+      .map(r => {
+        const idLit = JSON.stringify(String(r.id));
+        return `
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div><strong>${r.display}</strong><br/><small>${r.cost} pts</small></div>
-      <button class="btn btn-outline" onclick="redeemReward('${r.id}')">Redeem</button>
+      <button type="button" class="btn btn-outline" onclick="redeemRewardPickPhoto(${idLit})">Redeem (QR)</button>
     </div>
-  `)
+  `;
+      })
       .join("");
   };
   if (apiMode && getToken()) {
@@ -2551,36 +2779,6 @@ function initRewards() {
     return;
   }
   paint(RewardsService.catalog());
-}
-
-async function redeemReward(rewardId) {
-  const user = AuthService.currentUser();
-  if (!user || normalizeRole(user.role) !== "household") {
-    showToast("Only household users can redeem rewards.");
-    return;
-  }
-  if (apiMode && getToken()) {
-    try {
-      const result = await apiFetch("/rewards/redeem", {
-        method: "POST",
-        body: JSON.stringify({ rewardId })
-      });
-      await syncFromServer();
-      showToast(`Redeemed: ${result.reward.display}`);
-      refreshUI();
-      return;
-    } catch (e) {
-      showToast(e.message || "Redemption failed.");
-      return;
-    }
-  }
-  const result = RewardsService.redeem(rewardId, user);
-  if (!result.ok) {
-    showToast(result.message);
-    return;
-  }
-  showToast(`Redeemed: ${result.reward.display}`);
-  refreshUI();
 }
 
 function initAuth() {
@@ -3427,43 +3625,6 @@ function initAdminActions() {
     }
     showToast("XML export requires server mode.");
   });
-
-  document.getElementById("btn-admin-users")?.addEventListener("click", () => openAdminUsersTool());
-
-  document.getElementById("btn-admin-broadcast")?.addEventListener("click", async () => {
-    const user = AuthService.currentUser();
-    if (!user || normalizeRole(user.role) !== "admin") {
-      showToast("Admin access only.");
-      return;
-    }
-    const msg = window.prompt("Broadcast message to all households:");
-    if (msg == null) return;
-    const trimmed = String(msg).trim();
-    if (!trimmed) {
-      showToast("Message required.");
-      return;
-    }
-    if (apiMode && getToken()) {
-      try {
-        const res = await apiFetch("/admin/broadcast", {
-          method: "POST",
-          body: JSON.stringify({ message: trimmed })
-        });
-        showToast(`Broadcast sent to ${res.recipients ?? 0} households.`);
-        await syncFromServer();
-        refreshUI();
-        return;
-      } catch (e) {
-        showToast(e.message || "Broadcast failed.");
-        return;
-      }
-    }
-    adminBroadcastLocal(trimmed);
-    showToast(`Broadcast sent to ${AppState.users.filter(u => normalizeRole(u.role) === "household").length} households.`);
-    refreshUI();
-  });
-
-  document.getElementById("btn-admin-report")?.addEventListener("click", () => openAdminReportTool());
 }
 
 function initNavigation() {
@@ -3582,6 +3743,7 @@ function refreshUI() {
   renderLeaderboard();
   renderAdminAnalytics();
   renderAdminWasteLogs();
+  void renderAdminRewardQueue();
   initRewards();
   persistState();
 }
@@ -3702,7 +3864,7 @@ window.renderNotifications = renderNotifications;
 window.initGuide = initGuide;
 window.initRewards = initRewards;
 window.handleCollectorDecision = handleCollectorDecision;
-window.redeemReward = redeemReward;
+window.redeemRewardPickPhoto = redeemRewardPickPhoto;
 window.selectModalType = selectModalType;
 window.logout = logout;
 window.cancelLogSubmission = cancelLogSubmission;
