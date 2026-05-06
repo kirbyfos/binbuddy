@@ -625,6 +625,56 @@ a { text-decoration: none; color: inherit; }
   font-weight: 600;
   margin-top: 6px;
 }
+
+/* Rewards — redemption actions: roomy tap targets, clear Cancel affordance */
+.reward-submit-actions {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 4vmin, 20px);
+  margin-top: 12px;
+  padding-top: 6px;
+}
+.reward-submit-actions .btn {
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(46, 139, 87, 0.2);
+}
+.reward-submit-send {
+  min-height: 52px;
+  margin-top: 0 !important;
+}
+.reward-submit-cancel {
+  cursor: pointer;
+  margin-top: 0 !important;
+  min-height: 52px;
+  padding: clamp(14px, 4vmin, 20px) 20px !important;
+  margin-bottom: 4px !important;
+  border: 2px solid var(--border, #cfd8cf);
+  border-radius: 14px !important;
+  color: var(--text-main);
+  font-size: clamp(0.94rem, 2.8vmin, 1.02rem);
+  font-weight: 750;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.06);
+  transition:
+    background 0.22s ease,
+    border-color 0.22s ease,
+    color 0.18s ease,
+    transform 0.12s ease,
+    box-shadow 0.2s ease;
+}
+.reward-submit-cancel:hover {
+  background: #eef6f2;
+  border-color: rgba(46, 139, 87, 0.55);
+  color: var(--primary-dark);
+  box-shadow: 0 4px 12px rgba(0, 100, 0, 0.12);
+}
+.reward-submit-cancel:active {
+  transform: scale(0.982);
+}
+.reward-submit-cancel:focus-visible {
+  outline: 3px solid var(--primary-light, #81c784);
+  outline-offset: 3px;
+}
 .divider {
   text-align: center;
   color: var(--text-muted);
