@@ -585,7 +585,7 @@ const HELP_TOUR_STEPS_COLLECTOR = [
     icon: "⏳",
     title: "Stats",
     desc:
-      "Verified OK counts completed logs this year; Pending counts logs still waiting in the household queue—you can clear them from the Unverified tab."
+      "Verified counts completed logs this year; Pending counts logs still waiting in the household queue—you can clear them from the Unverified tab."
   }
 ];
 
@@ -826,7 +826,21 @@ function collectorProofMarkup(log) {
   return "";
 }
 
-async function hydrateCollectorLogPhotoMounts() {
+async /** Human-readable verifier for log cards (API `verifiedByName`, else local users, else raw id). */
+function wasteLogVerifierDisplayName(log) {
+  if (!log || log.verifiedBy == null || log.verifiedBy === "") return "";
+  const fromApi =
+    log.verifiedByName != null && String(log.verifiedByName).trim() !== ""
+      ? String(log.verifiedByName).trim()
+      : "";
+  if (fromApi) return fromApi;
+  const uid = log.verifiedBy;
+  const u = (AppState.users || []).find(usr => sameUserId(usr.id, uid));
+  if (u && u.name) return u.name;
+  return String(uid);
+}
+
+function hydrateCollectorLogPhotoMounts() {
   const user = AuthService.currentUser();
   if (!user || normalizeRole(user.role) !== "collector") return;
   if (!apiMode || !getToken()) return;
@@ -850,7 +864,8 @@ async function hydrateCollectorLogPhotoMounts() {
 
 function htmlVerifiedLogCardReadOnly(log, opts = {}) {
   const showVerifier = opts.showVerifier !== false;
-  const verifier = showVerifier && log.verifiedBy ? ` · Verified by ${log.verifiedBy}` : "";
+  const vName = showVerifier ? wasteLogVerifierDisplayName(log) : "";
+  const verifier = vName ? ` · Verified by ${vName}` : "";
   const proof = collectorProofMarkup(log);
   return `
       <div class="card" style="margin-bottom:8px">

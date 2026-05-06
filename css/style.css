@@ -843,6 +843,27 @@ a { text-decoration: none; color: inherit; }
 }
 .stat-card .stat-label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; margin-top: 2px; }
 
+/* Collector dashboard: keep Verified + Pending equal width when global stats-grid uses 4 columns on desktop */
+#screen-collector .collector-stats-grid.stats-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+#screen-collector .collector-stats-grid .stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 112px;
+  box-sizing: border-box;
+}
+@media (min-width: 900px) {
+  #screen-collector .collector-stats-grid.stats-grid {
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 /* ---- Section Title ---- */
 .section-title {
   font-family: var(--font-main);

@@ -295,6 +295,7 @@ function mapWasteLogRow(row) {
         status: row.status,
         ecoPointsAwarded: Number(row.eco_points_awarded || 0),
         verifiedBy: row.verified_by,
+        verifiedByName: row.verifier_name ? String(row.verifier_name).trim() || null : null,
         notes: row.notes || '',
         createdAt: toIso(row.created_at),
         logDate: toIso(row.log_date),
@@ -554,20 +555,24 @@ app.get('/api/auth/me', authRequired, requireDb, async (req, res) => {
 
 app.get('/api/logs', authRequired, requireDb, async (req, res) => {
     try {
+        await readUsersColumns();
         const viewer = mapRoleForClient(req.user.role);
         const uid = Number(req.user.id);
+        const idCol = usersIdColumn();
+        const wlSelect = `
+            wl.log_id, wl.user_id, wl.user_name, wl.waste_type, wl.weight, wl.status, wl.eco_points_awarded,
+            wl.verified_by, wl.notes, wl.photo_filename, wl.log_date, wl.created_at, wl.completed_at,
+            vu.full_name AS verifier_name
+        `;
+        const wlJoin = `FROM waste_logs wl LEFT JOIN users vu ON vu.${idCol} = wl.verified_by`;
         let rows;
         if (viewer === 'collector' || viewer === 'admin') {
             [rows] = await pool.query(
-                `SELECT log_id, user_id, user_name, waste_type, weight, status, eco_points_awarded,
-                        verified_by, notes, photo_filename, log_date, created_at, completed_at
-                 FROM waste_logs ORDER BY created_at DESC LIMIT 500`
+                `SELECT ${wlSelect} ${wlJoin} ORDER BY wl.created_at DESC LIMIT 500`
             );
         } else {
             [rows] = await pool.query(
-                `SELECT log_id, user_id, user_name, waste_type, weight, status, eco_points_awarded,
-                        verified_by, notes, photo_filename, log_date, created_at, completed_at
-                 FROM waste_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 200`,
+                `SELECT ${wlSelect} ${wlJoin} WHERE wl.user_id = ? ORDER BY wl.created_at DESC LIMIT 200`,
                 [uid]
             );
         }
