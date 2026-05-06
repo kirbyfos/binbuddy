@@ -959,7 +959,7 @@ function wasteLogVerifierDisplayName(log) {
   return String(uid);
 }
 
-function hydrateCollectorLogPhotoMounts() {
+async function hydrateCollectorLogPhotoMounts() {
   const user = AuthService.currentUser();
   if (!user || normalizeRole(user.role) !== "collector") return;
   if (!apiMode || !getToken()) return;
