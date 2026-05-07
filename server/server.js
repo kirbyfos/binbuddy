@@ -473,7 +473,7 @@ app.post('/api/auth/register', requireDb, async (req, res) => {
 
         if (!usersColumnInfo.loaded) {
             insertColumns.push('mobile', 'phone_number', 'address', 'gender', 'barangay', 'streak_days');
-            insertValues.push(cleanPhone, cleanPhone, cleanAddress, genderVal, 'Holy Spirit', 0);
+            insertValues.push(cleanPhone, cleanPhone, cleanAddress, genderVal, 'Lipa City', 0);
         } else {
             if (supportsUsersColumn('phone_number')) {
                 insertColumns.push('phone_number');
@@ -507,7 +507,7 @@ app.post('/api/auth/register', requireDb, async (req, res) => {
             eco_points: 0,
             level: 'Seedling',
             streak_days: 0,
-            barangay: 'Holy Spirit',
+            barangay: 'Lipa City',
             phone_number: cleanPhone,
             address: cleanAddress,
             gender: cleanGender === 'male' || cleanGender === 'female' ? cleanGender : ''

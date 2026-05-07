@@ -1206,7 +1206,7 @@ async function syncFromServer(options = {}) {
         ecoPoints: Number(user.ecoPoints) || 0,
         streak: Number(user.streak) || 0,
         badge: user.badge || "Eco Starter",
-        barangay: user.barangay || "Holy Spirit",
+        barangay: user.barangay || "Lipa City",
         password: "",
         completedDisposals: myLb
           ? Number(myLb.completedDisposals) || 0
@@ -1297,7 +1297,7 @@ async function syncFromServer(options = {}) {
           ecoPoints: user.ecoPoints || 0,
           streak: user.streak || 0,
           badge: user.badge || "",
-          barangay: user.barangay || "Holy Spirit",
+          barangay: user.barangay || "Lipa City",
           password: ""
         }
       ];
@@ -1420,7 +1420,7 @@ function applySessionFromAuthUser(user) {
     ecoPoints: Number(user.ecoPoints) || 0,
     streak: Number(user.streak) || 0,
     badge: user.badge || "Eco Starter",
-    barangay: user.barangay || "Holy Spirit",
+    barangay: user.barangay || "",
     password: ""
   };
   AppState.users = [local];
@@ -1467,9 +1467,9 @@ function buildSeedState() {
         ecoPoints: 1245,
         streak: 7,
         badge: "Eco Hero",
-        barangay: "Holy Spirit",
+        barangay: "Lipa City",
         phoneNumber: "09171234567",
-        address: "Brgy. Holy Spirit, Lipa City",
+        address: "Lipa City, Philippines",
         gender: "female"
       },
       {
@@ -1481,9 +1481,9 @@ function buildSeedState() {
         ecoPoints: 0,
         streak: 0,
         badge: "Collector",
-        barangay: "Holy Spirit",
+        barangay: "Lipa City",
         phoneNumber: "09171230000",
-        address: "Brgy. Holy Spirit, Lipa City",
+        address: "Lipa City, Philippines",
         gender: "male"
       },
       {

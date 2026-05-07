@@ -111,13 +111,13 @@ function seedIfEmpty() {
     email: "maria@email.com",
     password_hash: hash("password123"),
     phone_number: "09171234567",
-    address: "Brgy. Holy Spirit, Lipa City",
+    address: "Lipa City, Philippines",
     gender: "female",
     role: "household",
     eco_points: 1245,
     streak_days: 7,
     level: "Eco Hero",
-    barangay: "Holy Spirit"
+    barangay: "Lipa City"
   });
   insertUser.run({
     user_code: "COL001",
@@ -125,13 +125,13 @@ function seedIfEmpty() {
     email: "collector@email.com",
     password_hash: hash("password123"),
     phone_number: "09171230000",
-    address: "Brgy. Holy Spirit, Lipa City",
+    address: "Lipa City, Philippines",
     gender: "male",
     role: "collector",
     eco_points: 0,
     streak_days: 0,
     level: null,
-    barangay: "Holy Spirit"
+    barangay: "Lipa City"
   });
   insertUser.run({
     user_code: "ADM001",

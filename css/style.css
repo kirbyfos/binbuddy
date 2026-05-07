@@ -106,11 +106,24 @@ a { text-decoration: none; color: inherit; }
 }
 .top-nav[hidden] { display: none; }
 .top-nav-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-family: var(--font-main);
   font-weight: 900;
   letter-spacing: -0.5px;
   cursor: pointer;
   user-select: none;
+}
+.top-nav-logo-img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.top-nav-logo-text {
+  line-height: 1;
 }
 .top-nav-menu {
   display: flex;
@@ -1808,6 +1821,11 @@ a { text-decoration: none; color: inherit; }
 }
 .badge-icon.earned { border-color: var(--gold); background: #fffbe6; box-shadow: 0 0 12px rgba(255,215,0,0.3); }
 .badge-item .badge-name { font-size: 0.65rem; font-weight: 700; color: var(--text-muted); }
+
+/* Tutorial control: hidden while splash is up so it cannot steal taps / confuse guests */
+#app:has(#screen-splash.active) #help-btn {
+  display: none !important;
+}
 
 /* ---- Floating Help Button ---- */
 .help-btn {

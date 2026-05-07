@@ -22,15 +22,15 @@ function getUserByEmail(email) {
 
 function barangayFromAddress(address) {
   const s = String(address || "").trim();
-  if (!s) return "Holy Spirit";
+  if (!s) return "Lipa City";
   const m = s.match(/(?:Brgy\.?|Barangay)\s*([^,]+)/i);
   if (m) {
     const n = m[1].trim().slice(0, 120);
-    return n || "Holy Spirit";
+    return n || "Lipa City";
   }
   const first = s.split(",")[0].trim();
   const n = first.replace(/^(?:Brgy\.?|Barangay)\s*/i, "").trim() || first;
-  return (n || "Holy Spirit").slice(0, 120);
+  return (n || "Lipa City").slice(0, 120);
 }
 
 function nextUserCode(role) {

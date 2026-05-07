@@ -15,7 +15,7 @@
   <meta name="binbuddy-api-base" content=""/>
   <title>BinBuddy – Smart Waste Tracking</title>
   <link rel="stylesheet" href="css/style.css"/>
-  <link rel="icon" type="image/svg+xml" href="assets/binbuddy-logo.svg"/>
+  <link rel="icon" type="image/png" href="assets/binbuddy-logo.png"/>
 </head>
 <body>
 
@@ -24,7 +24,8 @@
   <header class="top-nav" id="top-nav" hidden aria-hidden="true">
     <div class="top-nav-left">
       <div class="top-nav-logo" role="button" tabindex="0" onclick="goTo('home')" aria-label="BinBuddy home">
-        ♻️ BinBuddy
+        <img class="top-nav-logo-img" src="assets/binbuddy-logo.png" width="36" height="36" alt="" decoding="async"/>
+        <span class="top-nav-logo-text">BinBuddy</span>
       </div>
     </div>
     <button class="top-nav-burger" id="top-nav-burger" type="button" aria-label="Menu" aria-expanded="false">☰</button>
@@ -53,7 +54,7 @@
   ==================================================== -->
   <section id="screen-splash" class="screen active">
     <div class="splash-icon" aria-hidden="true">
-      <img src="assets/binbuddy-logo.svg" alt=""/>
+      <img src="assets/binbuddy-logo.png" alt="BinBuddy"/>
     </div>
     <div class="splash-logo">Bin<span>Buddy</span></div>
     <div class="splash-tagline">Smart Waste Tracking & Rewards Platform<br/>Lipa City, Philippines</div>
@@ -73,7 +74,7 @@
         <div class="auth-brand-stack">
           <img
             class="auth-brand-logo"
-            src="assets/binbuddy-logo.svg"
+            src="assets/binbuddy-logo.png"
             alt="BinBuddy logo"
           />
           <h1 class="auth-split-brand-title">BinBuddy</h1>
@@ -639,14 +640,14 @@
     <div class="profile-hero">
       <div class="profile-avatar">🚛</div>
       <div class="profile-name">Roberto Cruz</div>
-      <div class="profile-role">Collector · Brgy. Holy Spirit, Lipa City</div>
+      <div class="profile-role">Collector · Lipa City, Philippines</div>
     </div>
     <div style="padding:16px">
       <div class="card">
         <div class="section-title">👤 Collector Profile</div>
         <div style="font-size:0.86rem;color:var(--text-muted);line-height:1.6">
           <div><strong>Role:</strong> Waste Collector</div>
-          <div><strong>Area:</strong> Brgy. Holy Spirit</div>
+          <div><strong>Area:</strong> Lipa City</div>
           <div><strong>Status:</strong> Active Duty</div>
         </div>
       </div>
@@ -698,7 +699,7 @@
     </div>
     <div class="page-content">
       <div class="eco-tip">
-        <strong>🏆 Brgy. Holy Spirit</strong> leads in Lipa City with 72% segregation compliance!
+        <strong>🏆 Lipa City</strong> barangays lead local segregation compliance — keep logging to climb the ranks!
       </div>
       <div class="section-title">🌟 Top BinBuddy – April 2026</div>
       <div id="leaderboard-list-screen" data-leaderboard-list>
@@ -865,6 +866,12 @@
     </div>
   </section>
 
+  </div><!-- /mount-dashboard-phase -->
+
+  <!--
+    Global layers live OUTSIDE #mount-dashboard-phase so they stay visible and interactive
+    while the dashboard mount is hidden during splash / sign-in (previously toast & modals were trapped).
+  -->
   <!-- ====================================================
        FLOATING HELP BUTTON
   ==================================================== -->
@@ -953,8 +960,6 @@
 
   <!-- Toast Notification -->
   <div class="toast" id="toast"></div>
-
-  </div><!-- /mount-dashboard-phase -->
 
 </div><!-- #app -->
 
