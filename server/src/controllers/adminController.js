@@ -94,13 +94,16 @@ export function getAnalytics(req, res) {
   const weekly = weeklySeries();
   const topUsers = db
     .prepare(
-      `SELECT user_code, full_name, eco_points FROM users WHERE role = 'household' ORDER BY eco_points DESC LIMIT 5`
+      `SELECT user_code, full_name, email, barangay, address, eco_points FROM users WHERE role = 'household' ORDER BY eco_points DESC LIMIT 5`
     )
     .all()
     .map((u, i) => ({
       rank: i + 1,
       id: u.user_code,
       name: u.full_name,
+      email: u.email || "",
+      barangay: u.barangay || "",
+      address: u.address || "",
       ecoPoints: u.eco_points
     }));
 

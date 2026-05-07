@@ -1012,9 +1012,9 @@ app.get('/api/admin/analytics', authRequired, requireDb, requireRoles('admin'), 
         if (!usersColumnInfo.loaded) await readUsersColumns();
         const idCol = usersIdColumn();
         const [topRows] = await pool.query(
-            `SELECT ${idCol} AS id, full_name AS name, email, barangay, eco_points AS ecoPoints
+            `SELECT ${idCol} AS id, full_name AS name, email, barangay, address, eco_points AS ecoPoints
              FROM users
-             WHERE role = 'household'
+             WHERE LOWER(role) IN ('household','user')
              ORDER BY eco_points DESC
              LIMIT 5`
         );
@@ -1024,6 +1024,7 @@ app.get('/api/admin/analytics', authRequired, requireDb, requireRoles('admin'), 
             name: t.name,
             email: t.email,
             barangay: t.barangay,
+            address: t.address || '',
             ecoPoints: Number(t.ecoPoints || 0)
         }));
 

@@ -294,13 +294,13 @@ function formatBarangayLabel(part) {
   return `Brgy. ${x}`;
 }
 
-/** Same barangay line for Dashboard, Rewards, and Profile — from stored address / barangay. */
+/** Same barangay line for Dashboard, Rewards, and Profile — prefer stored `barangay`, then address. */
 function getUserBarangayLabel(user) {
   if (!user) return NO_ADDRESS_LABEL;
-  const fromAddr = extractBarangaySegment(user.address);
-  if (fromAddr) return formatBarangayLabel(fromAddr);
   const br = String(user.barangay || "").trim();
   if (br) return formatBarangayLabel(br);
+  const fromAddr = extractBarangaySegment(user.address);
+  if (fromAddr) return formatBarangayLabel(fromAddr);
   const raw = String(user.address || "").trim();
   if (raw) return raw;
   return NO_ADDRESS_LABEL;
@@ -1277,7 +1277,28 @@ async function syncFromServer(options = {}) {
         barangay: u.barangay || "",
         password: ""
       }));
-      if (mappedAdminUsers.length) AppState.users = mappedAdminUsers;
+      if (mappedAdminUsers.length) {
+        AppState.users = mappedAdminUsers;
+        /** `/admin/users` can lag `/auth/me`; keep the signed-in admin row aligned with the session user. */
+        const cid = String(user.id);
+        const ix = AppState.users.findIndex(x => String(x.id) === cid);
+        if (ix >= 0) {
+          const row = AppState.users[ix];
+          AppState.users[ix] = {
+            ...row,
+            name: user.name ?? row.name,
+            email: user.email ?? row.email,
+            phoneNumber: user.phoneNumber ?? row.phoneNumber,
+            address: user.address ?? row.address,
+            gender: user.gender ?? row.gender,
+            barangay: user.barangay ?? row.barangay,
+            ecoPoints: Number(user.ecoPoints ?? row.ecoPoints) || 0,
+            streak: Number(user.streak ?? row.streak) || 0,
+            badge: user.badge ?? row.badge,
+            role: user.role ?? row.role
+          };
+        }
+      }
     } else {
       const [logsData, notifData] = await Promise.all([
         apiFetch("/logs", tOpt),
@@ -2898,19 +2919,23 @@ function renderAdminAnalytics() {
     const adminUsers = document.getElementById("admin-users");
     if (adminUsers && adminAnalyticsCache.topHouseholds) {
       adminUsers.innerHTML = adminAnalyticsCache.topHouseholds
-        .map(
-          u => `
+        .map(u => {
+          const brLabel = getUserBarangayLabel({
+            barangay: u.barangay || "",
+            address: u.address || ""
+          });
+          const hasBr = brLabel !== NO_ADDRESS_LABEL;
+          const meta = `${u.email ? u.email : ""}${hasBr ? `${u.email ? " · " : ""}${brLabel}` : ""}`;
+          return `
       <div class="card" style="display:flex;justify-content:space-between">
         <span>
           <strong>#${u.rank ?? "—"}</strong> ${u.name || "—"}<br/>
-          <small style="color:var(--text-muted)">
-            ${u.email ? u.email : ""}${u.barangay ? (u.email ? " · " : "") + u.barangay : ""}
-          </small>
+          <small style="color:var(--text-muted)">${meta}</small>
         </span>
         <strong>${Number(u.ecoPoints ?? u.pts ?? 0)} pts</strong>
       </div>
-    `
-        )
+    `;
+        })
         .join("");
     }
 
