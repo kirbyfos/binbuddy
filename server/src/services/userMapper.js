@@ -1,3 +1,19 @@
+function barangayFromAddress(address) {
+  const s = String(address || "").trim();
+  if (!s) return "";
+  const m = s.match(/(?:Brgy\.?|Barangay)\s*([^,]+)/i);
+  if (m) return (m[1].trim().slice(0, 120)) || "";
+  const first = s.split(",")[0].trim();
+  const n = first.replace(/^(?:Brgy\.?|Barangay)\s*/i, "").trim() || first;
+  return n.slice(0, 120);
+}
+
+function resolveUserBarangay(row) {
+  const addr = String(row?.address || "").trim();
+  if (addr) return barangayFromAddress(addr) || addr;
+  return String(row?.barangay || "").trim();
+}
+
 export function toPublicUser(row) {
   if (!row) return null;
   return {
@@ -10,7 +26,7 @@ export function toPublicUser(row) {
     ecoPoints: row.eco_points,
     streak: row.streak_days,
     badge: row.level || "Eco Starter",
-    barangay: row.barangay || "",
+    barangay: resolveUserBarangay(row),
     gender: row.gender || ""
   };
 }

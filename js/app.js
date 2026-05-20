@@ -285,6 +285,18 @@ function extractBarangaySegment(address) {
   return first.replace(/^(?:Brgy\.?|Barangay)\s*/i, "").trim().slice(0, 120) || first.slice(0, 120);
 }
 
+/** Registration address is the source of truth; fall back to stored barangay only when address is empty. */
+function barangayFromRegistration(user) {
+  if (!user) return "";
+  const addr = String(user.address || "").trim();
+  if (addr) {
+    const seg = extractBarangaySegment(addr);
+    return seg || addr;
+  }
+  const br = String(user.barangay || "").trim();
+  return br.replace(/^(?:brgy\.?|barangay)\s*/i, "").trim() || br;
+}
+
 function formatBarangayLabel(part) {
   const x = String(part || "").trim();
   if (!x) return "";
@@ -294,26 +306,17 @@ function formatBarangayLabel(part) {
   return `Brgy. ${x}`;
 }
 
-/** Same barangay line for Dashboard, Rewards, and Profile — prefer stored `barangay`, then address. */
+/** Same barangay line for Dashboard, Rewards, Profile, collector, and admin — from registration address. */
 function getUserBarangayLabel(user) {
   if (!user) return NO_ADDRESS_LABEL;
-  const br = String(user.barangay || "").trim();
-  if (br) return formatBarangayLabel(br);
-  const fromAddr = extractBarangaySegment(user.address);
-  if (fromAddr) return formatBarangayLabel(fromAddr);
-  const raw = String(user.address || "").trim();
-  if (raw) return raw;
-  return NO_ADDRESS_LABEL;
+  const part = barangayFromRegistration(user);
+  if (!part) return NO_ADDRESS_LABEL;
+  return formatBarangayLabel(part);
 }
 
 /** Lowercase key so households in the same barangay group together for rankings. */
 function userBarangayRankKey(user) {
-  if (!user) return "";
-  const br = String(user.barangay || "").trim().toLowerCase();
-  const cleanedBr = br.replace(/^(?:brgy\.?|barangay)\s*/i, "").trim();
-  if (cleanedBr) return cleanedBr;
-  const seg = extractBarangaySegment(user.address);
-  return String(seg || "")
+  return String(barangayFromRegistration(user) || "")
     .trim()
     .toLowerCase()
     .replace(/^(?:brgy\.?|barangay)\s*/i, "")
@@ -1016,6 +1019,8 @@ function renderCollectorProfileShell() {
   const roleEl = sec.querySelector(".profile-role");
   if (nameEl) nameEl.textContent = user.name || "Collector";
   if (roleEl) roleEl.textContent = `Collector · ${getUserBarangayLabel(user)}`;
+  const areaEl = document.getElementById("collector-profile-area");
+  if (areaEl) areaEl.textContent = getUserBarangayLabel(user);
 
   const hist = document.getElementById("collector-profile-history-list");
   if (!hist) return;
@@ -1206,7 +1211,7 @@ async function syncFromServer(options = {}) {
         ecoPoints: Number(user.ecoPoints) || 0,
         streak: Number(user.streak) || 0,
         badge: user.badge || "Eco Starter",
-        barangay: user.barangay || "Lipa City",
+        barangay: barangayFromRegistration(user),
         password: "",
         completedDisposals: myLb
           ? Number(myLb.completedDisposals) || 0
@@ -1222,13 +1227,16 @@ async function syncFromServer(options = {}) {
           name: r.name || "User",
           email: "",
           phoneNumber: "",
-          address: "",
+          address: r.address != null ? String(r.address) : "",
           gender: "",
           role: "household",
           ecoPoints: Number(r.ecoPoints) || 0,
           streak: 0,
           badge: "Eco Starter",
-          barangay: r.barangay != null ? String(r.barangay) : "",
+          barangay: barangayFromRegistration({
+            address: r.address != null ? String(r.address) : "",
+            barangay: r.barangay != null ? String(r.barangay) : ""
+          }),
           password: "",
           completedDisposals: Number(r.completedDisposals) || 0,
           completedKg: Number(r.completedKg) || 0
@@ -1291,7 +1299,10 @@ async function syncFromServer(options = {}) {
             phoneNumber: user.phoneNumber ?? row.phoneNumber,
             address: user.address ?? row.address,
             gender: user.gender ?? row.gender,
-            barangay: user.barangay ?? row.barangay,
+            barangay: barangayFromRegistration({
+              address: user.address ?? row.address,
+              barangay: user.barangay ?? row.barangay
+            }),
             ecoPoints: Number(user.ecoPoints ?? row.ecoPoints) || 0,
             streak: Number(user.streak ?? row.streak) || 0,
             badge: user.badge ?? row.badge,
@@ -1318,7 +1329,7 @@ async function syncFromServer(options = {}) {
           ecoPoints: user.ecoPoints || 0,
           streak: user.streak || 0,
           badge: user.badge || "",
-          barangay: user.barangay || "Lipa City",
+          barangay: barangayFromRegistration(user),
           password: ""
         }
       ];

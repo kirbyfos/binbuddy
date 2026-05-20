@@ -253,8 +253,25 @@ const readUsersColumns = async () => {
     }
 };
 
+const barangayFromAddress = (address) => {
+    const s = String(address || '').trim();
+    if (!s) return '';
+    const m = s.match(/(?:Brgy\.?|Barangay)\s*([^,]+)/i);
+    if (m) return (m[1].trim().slice(0, 120)) || '';
+    const first = s.split(',')[0].trim();
+    const n = first.replace(/^(?:Brgy\.?|Barangay)\s*/i, '').trim() || first;
+    return n.slice(0, 120);
+};
+
+const resolveUserBarangay = (user = {}) => {
+    const addr = String(user.address || '').trim();
+    if (addr) return barangayFromAddress(addr) || addr;
+    return String(user.barangay || '').trim();
+};
+
 const normalizeUserRow = (user = {}) => {
     const eco = Number(user.eco_points || 0);
+    const address = user.address || '';
     return {
         ...user,
         id: user.id,
@@ -262,9 +279,9 @@ const normalizeUserRow = (user = {}) => {
         ecoPoints: eco,
         streak: Number(user.streak ?? user.streak_days ?? 0),
         badge: user.level || 'Eco Starter',
-        barangay: user.barangay || '',
+        barangay: resolveUserBarangay(user),
         phoneNumber: user.phone_number || user.mobile || '',
-        address: user.address || '',
+        address,
         gender: user.gender || '',
         role: mapRoleForClient(user.role)
     };
@@ -470,10 +487,11 @@ app.post('/api/auth/register', requireDb, async (req, res) => {
         const insertColumns = ['full_name', 'email', usersPasswordColumn(), 'role', 'eco_points', 'level'];
         const insertValues = [cleanName, cleanEmail, hashPasswordValue(cleanPassword), dbRole, 0, 'Seedling'];
         const genderVal = cleanGender === 'male' || cleanGender === 'female' ? cleanGender : null;
+        const registeredBarangay = barangayFromAddress(cleanAddress) || cleanAddress;
 
         if (!usersColumnInfo.loaded) {
             insertColumns.push('mobile', 'phone_number', 'address', 'gender', 'barangay', 'streak_days');
-            insertValues.push(cleanPhone, cleanPhone, cleanAddress, genderVal, 'Lipa City', 0);
+            insertValues.push(cleanPhone, cleanPhone, cleanAddress, genderVal, registeredBarangay, 0);
         } else {
             if (supportsUsersColumn('phone_number')) {
                 insertColumns.push('phone_number');
@@ -492,6 +510,16 @@ app.post('/api/auth/register', requireDb, async (req, res) => {
                 insertColumns.push('gender');
                 insertValues.push(genderVal);
             }
+
+            if (supportsUsersColumn('barangay')) {
+                insertColumns.push('barangay');
+                insertValues.push(registeredBarangay);
+            }
+
+            if (supportsUsersColumn('streak_days')) {
+                insertColumns.push('streak_days');
+                insertValues.push(0);
+            }
         }
 
         const placeholders = insertColumns.map(() => '?').join(', ');
@@ -507,7 +535,7 @@ app.post('/api/auth/register', requireDb, async (req, res) => {
             eco_points: 0,
             level: 'Seedling',
             streak_days: 0,
-            barangay: 'Lipa City',
+            barangay: registeredBarangay,
             phone_number: cleanPhone,
             address: cleanAddress,
             gender: cleanGender === 'male' || cleanGender === 'female' ? cleanGender : ''
@@ -765,12 +793,13 @@ app.get('/api/leaderboard', authRequired, requireDb, async (_req, res) => {
               u.full_name AS name,
               u.eco_points AS ecoPoints,
               COALESCE(u.barangay, '') AS barangay,
+              COALESCE(u.address, '') AS address,
               COALESCE(SUM(CASE WHEN wl.status = 'Completed' THEN 1 ELSE 0 END), 0) AS completedDisposals,
               COALESCE(SUM(CASE WHEN wl.status = 'Completed' THEN wl.weight ELSE 0 END), 0) AS completedKg
             FROM users u
             LEFT JOIN waste_logs wl ON wl.user_id = u.${idCol}
             WHERE u.role = 'household'
-            GROUP BY u.${idCol}, u.full_name, u.eco_points, u.barangay
+            GROUP BY u.${idCol}, u.full_name, u.eco_points, u.barangay, u.address
             ORDER BY u.eco_points DESC
             LIMIT 50
         `
@@ -779,7 +808,8 @@ app.get('/api/leaderboard', authRequired, requireDb, async (_req, res) => {
             leaderboard: rows.map((r) => ({
                 id: r.id,
                 name: r.name,
-                barangay: r.barangay != null ? String(r.barangay) : '',
+                barangay: resolveUserBarangay(r),
+                address: r.address != null ? String(r.address) : '',
                 ecoPoints: Number(r.ecoPoints || 0),
                 completedDisposals: Number(r.completedDisposals ?? 0) || 0,
                 completedKg: Number(Number(r.completedKg ?? 0).toFixed(2))
@@ -1023,7 +1053,7 @@ app.get('/api/admin/analytics', authRequired, requireDb, requireRoles('admin'), 
             id: t.id,
             name: t.name,
             email: t.email,
-            barangay: t.barangay,
+            barangay: resolveUserBarangay(t),
             address: t.address || '',
             ecoPoints: Number(t.ecoPoints || 0)
         }));

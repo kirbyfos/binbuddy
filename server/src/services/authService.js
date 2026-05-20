@@ -22,15 +22,15 @@ function getUserByEmail(email) {
 
 function barangayFromAddress(address) {
   const s = String(address || "").trim();
-  if (!s) return "Lipa City";
+  if (!s) return "";
   const m = s.match(/(?:Brgy\.?|Barangay)\s*([^,]+)/i);
   if (m) {
     const n = m[1].trim().slice(0, 120);
-    return n || "Lipa City";
+    return n || "";
   }
   const first = s.split(",")[0].trim();
   const n = first.replace(/^(?:Brgy\.?|Barangay)\s*/i, "").trim() || first;
-  return (n || "Lipa City").slice(0, 120);
+  return n.slice(0, 120);
 }
 
 function nextUserCode(role) {
@@ -69,7 +69,7 @@ export function register({ email, password, name, role: roleRaw, phoneNumber, ad
     authLog("register_rejected", { reason: "invalid_gender" });
     return { ok: false, message: "Gender is required (Male or Female)." };
   }
-  const barangay = barangayFromAddress(normalizedAddress);
+  const barangay = barangayFromAddress(normalizedAddress) || normalizedAddress;
 
   db.prepare(
     `INSERT INTO users (user_code, full_name, email, password_hash, phone_number, address, gender, role, eco_points, streak_days, level, barangay)

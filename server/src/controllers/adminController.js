@@ -97,15 +97,23 @@ export function getAnalytics(req, res) {
       `SELECT user_code, full_name, email, barangay, address, eco_points FROM users WHERE role = 'household' ORDER BY eco_points DESC LIMIT 5`
     )
     .all()
-    .map((u, i) => ({
-      rank: i + 1,
-      id: u.user_code,
-      name: u.full_name,
-      email: u.email || "",
-      barangay: u.barangay || "",
-      address: u.address || "",
-      ecoPoints: u.eco_points
-    }));
+    .map((u, i) => {
+      const addr = u.address || "";
+      const barangay = addr
+        ? (String(addr).match(/(?:Brgy\.?|Barangay)\s*([^,]+)/i)?.[1]?.trim().slice(0, 120) ||
+            String(addr).split(",")[0].trim().replace(/^(?:Brgy\.?|Barangay)\s*/i, "").trim() ||
+            addr)
+        : u.barangay || "";
+      return {
+        rank: i + 1,
+        id: u.user_code,
+        name: u.full_name,
+        email: u.email || "",
+        barangay,
+        address: addr,
+        ecoPoints: u.eco_points
+      };
+    });
 
   return res.json({
     ok: true,
