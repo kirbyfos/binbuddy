@@ -1,0 +1,11 @@
+# BinBuddy on Railway — config-as-code overrides dashboard settings per deploy.
+# https://docs.railway.com/config-as-code/reference
+
+[build]
+buildCommand = "npm --prefix server ci --omit=dev"
+
+[deploy]
+startCommand = "npm --prefix server start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"

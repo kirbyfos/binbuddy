@@ -172,16 +172,35 @@ BinBuddy is a **Smart Waste Tracking & Rewards Platform** that:
 
 ### What Aiven does (and doesn’t)
 - **Aiven hosts the MySQL database** (shared, cloud, non-local).
-- **You still need to host the Node.js app/API** somewhere (Render/Railway/Fly/VPS). This repo already serves both the UI + API from `server/server.js`.
+- **You still need to host the Node.js app/API** somewhere (Railway/Render/Fly/VPS). This repo already serves both the UI + API from `server/server.js`.
 
-### Recommended: Render
-This repo includes `render.yaml` for one-click deploy.
+### Recommended: Railway
+This repo includes `railway.toml` (config-as-code). Connect the GitHub repo, deploy from `main`, and leave the **root directory** empty (repo root).
 
-- **Build command**: `npm --prefix server ci --omit=dev`
+- **Build command** (from `railway.toml`): `npm --prefix server ci --omit=dev`
 - **Start command**: `npm --prefix server start`
 - **Health check**: `/api/health`
 
-Set these environment variables in your host (use your Aiven connection parameters):
+In the Railway service **Variables**, set (use your Aiven connection parameters):
+
+| Variable | Notes |
+|----------|--------|
+| `DB_HOST` | Aiven MySQL host |
+| `DB_PORT` | e.g. `17100` |
+| `DB_USER` | Aiven user |
+| `DB_PASSWORD` | Secret |
+| `DB_NAME` | e.g. `defaultdb` |
+| `JWT_SECRET` | Strong random secret |
+| `NODE_ENV` | `production` |
+
+Optional: `DB_CA_PEM` (Aiven CA PEM). Railway sets `PORT` automatically.
+
+**If a deploy stays queued:** cancel it, then **Redeploy** latest commit. In **Settings → Deploy**, confirm build/start match `railway.toml` (code config overrides the dashboard).
+
+### Alternative: Render
+`render.yaml` is included for Render; same build/start commands as Railway.
+
+Set these environment variables on any host (use your Aiven connection parameters):
 - `DB_HOST` (example: `mysql-3d4b176a-kirbyfos69-59bd.h.aivencloud.com`)
 - `DB_PORT` (Aiven MySQL port, commonly `17100`)
 - `DB_USER`
