@@ -195,7 +195,7 @@ In the Railway service **Variables**, set (use your Aiven connection parameters)
 
 Optional: `DB_CA_PEM` (Aiven CA PEM). Railway sets `PORT` automatically.
 
-**If a deploy stays queued:** cancel it, then **Redeploy** latest commit. In **Settings → Deploy**, confirm build/start match `railway.toml` (code config overrides the dashboard).
+**If a deploy stays queued:** cancel it in the dashboard, then deploy from VS Code with the Railway CLI — see **[DEPLOY-RAILWAY.md](./DEPLOY-RAILWAY.md)** (`npm run railway:login` once, then `npm run deploy:railway`). In **Settings → Deploy**, confirm build/start match `railway.toml`.
 
 ### Alternative: Render
 `render.yaml` is included for Render; same build/start commands as Railway.

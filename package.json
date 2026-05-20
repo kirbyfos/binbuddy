@@ -10,6 +10,9 @@
     "build": "npm --prefix server ci --omit=dev",
     "start": "npm --prefix server start",
     "dev": "npm --prefix server run dev",
+    "railway:login": "npx @railway/cli login",
+    "railway:link": "npx @railway/cli link",
+    "deploy:railway": "npx @railway/cli up --detach",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
