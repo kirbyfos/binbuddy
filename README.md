@@ -177,8 +177,9 @@ BinBuddy is a **Smart Waste Tracking & Rewards Platform** that:
 ### Recommended: Render
 This repo includes `render.yaml` for one-click deploy.
 
-- **Build command**: `npm ci && npm --prefix server ci`
-- **Start command**: `npm start`
+- **Build command**: `npm --prefix server ci --omit=dev`
+- **Start command**: `npm --prefix server start`
+- **Health check**: `/api/health`
 
 Set these environment variables in your host (use your Aiven connection parameters):
 - `DB_HOST` (example: `mysql-3d4b176a-kirbyfos69-59bd.h.aivencloud.com`)
