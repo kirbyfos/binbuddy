@@ -34,8 +34,7 @@
       <button type="button" class="top-nav-item" data-nav="track" data-role="household">Log Disposal</button>
       <button type="button" class="top-nav-item" data-nav="rewards" data-role="household">Rewards</button>
       <button type="button" class="top-nav-item" data-nav="notifications" data-role="household">Activity Log</button>
-      <button type="button" class="top-nav-item" data-nav="collector" data-collector-tab="unverified" data-role="collector">Unverified</button>
-      <button type="button" class="top-nav-item" data-nav="collector" data-collector-tab="verified" data-role="collector">Verified</button>
+      <button type="button" class="top-nav-item" data-nav="collector" data-role="collector">Household logs</button>
       <button type="button" class="top-nav-item" data-nav="collector-history" data-role="collector">History</button>
       <button type="button" class="top-nav-item" data-nav="admin" data-role="admin">Admin</button>
       <button type="button" class="top-nav-item" data-nav="profile" data-role="household">Profile</button>
@@ -177,6 +176,12 @@
         <div class="ecopoints-badge" id="eco-badge-pts">⭐ 1,245 pts</div>
       </div>
 
+      <div class="log-form-tabs home-dash-tabs" role="tablist" aria-label="Dashboard views" style="margin-bottom:14px">
+        <button type="button" class="log-tab active" data-home-tab="overview" onclick="setHomeDashboardTab('overview')">Overview</button>
+        <button type="button" class="log-tab" data-home-tab="notifications" onclick="setHomeDashboardTab('notifications')">Notifications</button>
+      </div>
+
+      <div id="home-panel-overview">
       <!-- Stats -->
       <div class="stats-grid">
         <div class="stat-card">
@@ -247,13 +252,17 @@
       <!-- Quick Navigate -->
       <div class="section-title">🚀 Quick Access</div>
       <div class="stats-grid quick-access-grid">
+        <div class="stat-card" onclick="setHomeDashboardTab('notifications')" style="cursor:pointer">
+          <div class="stat-icon">🔔</div>
+          <div class="stat-label" style="font-size:0.82rem;font-weight:700">Notifications</div>
+        </div>
         <div class="stat-card" onclick="goTo('guide');initGuide()" style="cursor:pointer">
           <div class="stat-icon">📚</div>
           <div class="stat-label" style="font-size:0.82rem;font-weight:700">Seg. Guide</div>
         </div>
         <div class="stat-card" onclick="goTo('rewards');initRewards()" style="cursor:pointer">
           <div class="stat-icon">🎁</div>
-          <div class="stat-label" style="font-size:0.82rem;font-weight:700">Rewards</div>
+          <div class="stat-label" style="font-size:0.82rem;font-weight:700">E-Money</div>
         </div>
         <div class="stat-card" onclick="goToRewardsLeaderboard()" style="cursor:pointer">
           <div class="stat-icon">🏆</div>
@@ -279,6 +288,13 @@
           </div>
         </div>
         <p style="font-size:0.75rem;color:var(--text-muted);text-align:center;margin-top:10px">Source: DENR, Metro Manila Data 2025 · RA 9003 Aligned</p>
+      </div>
+      </div><!-- /home-panel-overview -->
+
+      <div id="home-panel-notifications" hidden>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Updates when collectors verify your logs, admins send rewards, and other BinBuddy alerts.</p>
+        <div id="home-notif-list"></div>
+        <button type="button" class="btn btn-ghost" style="margin-top:12px;width:100%" onclick="goTo('notifications');renderNotifications()">Open full activity log →</button>
       </div>
     </div>
   </section>
@@ -329,11 +345,11 @@
           <textarea class="form-control" rows="2" placeholder="e.g. Plastic bottles, food scraps..."></textarea>
         </div>
 
-        <!-- Photo Upload Mock -->
+        <!-- Photo required -->
         <div style="border:2px dashed var(--border);border-radius:12px;padding:20px;text-align:center;margin-bottom:16px;cursor:pointer;background:#fafffe"
              onclick="document.getElementById('manual-log-photo')?.click()">
           <div style="font-size:2rem">📷</div>
-          <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px" id="manual-photo-label">Tap to add photo proof (JPG/PNG)</div>
+          <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px" id="manual-photo-label">Photo required — tap to add (JPG/PNG)</div>
         </div>
         <input id="manual-log-photo" type="file" accept="image/jpeg,image/png" style="display:none"/>
 
@@ -381,7 +397,7 @@
   ==================================================== -->
   <section id="screen-rewards" class="screen">
     <div class="page-header">
-      <div class="page-header-sub">⭐ EcoPoints & Rewards</div>
+      <div class="page-header-sub">⭐ EcoPoints &amp; E-Money Rewards</div>
       <h1>Earn &amp; Redeem</h1>
     </div>
     <div class="page-content">
@@ -401,7 +417,7 @@
       <!-- Rewards Catalog Panel -->
       <div id="panel-catalog">
         <div class="section-title" style="margin-top:16px">🎁 Rewards Catalog</div>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Pick a reward below, then upload a photo of your payment QR. An admin verifies it and fulfills your reward.</p>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Pick an e-money reward below, then upload a photo of your e-money QR. An admin fulfills it and notifies you when sent.</p>
         <div class="rewards-grid" id="rewards-grid"></div>
 
         <!-- Step 2: QR photo submission (shown after choosing a catalog item) -->
@@ -433,7 +449,7 @@
             <div style="padding:14px;background:linear-gradient(135deg,#e8f7ec,#eaf6ff);border-radius:12px;border:1px solid rgba(46,139,87,0.25);font-size:0.9rem;line-height:1.55">
               <strong style="color:#1b5e20">✅ Sent successfully</strong>
               <p style="margin:8px 0 0;color:var(--text-main)">
-                Your photo is with the barangay admin and your EcoPoints have been deducted. <strong>Please wait</strong> while they claim and send your reward (load, voucher, or e-money). Check back later or watch for notices from your barangay.
+                Your QR photo is with the barangay admin and your EcoPoints have been deducted. <strong>Please wait</strong> while they send your e-money reward. Check the <strong>Notifications</strong> tab on your dashboard when the admin marks it as sent.
               </p>
             </div>
             <button type="button" class="btn btn-outline" style="margin-top:14px;width:100%" id="reward-submit-done-btn">Back to rewards</button>
@@ -511,7 +527,7 @@
   <section id="screen-collector" class="screen">
     <div class="page-header">
       <div class="page-header-sub">🚛 Waste Collector</div>
-      <h1>Pickup queue</h1>
+      <h1>Household logs</h1>
     </div>
     <div class="page-content">
       <!-- Collector Stats -->
@@ -528,26 +544,15 @@
         </div>
       </div>
 
-      <div class="log-form-tabs collector-pickup-tabs" style="margin-bottom:12px" role="tablist" aria-label="Pickup queue">
-        <button type="button" class="log-tab active" data-collector-tab="unverified" onclick="setCollectorPickupTab('unverified')">Unverified</button>
-        <button type="button" class="log-tab" data-collector-tab="verified" onclick="setCollectorPickupTab('verified')">Verified</button>
+      <div class="eco-tip" style="margin-bottom:12px">
+        <strong>Household logs</strong> — Pending pickups need your collection photo. Completed logs show proofs already sent to the admin.
       </div>
 
-      <div id="collector-panel-unverified">
-        <div class="eco-tip" style="margin-bottom:12px">
-          <strong>Photo-based pickup</strong> — Review the household’s waste log photo, take a photo of the collected waste, then <strong>Submit collection proof to admin</strong>. EcoPoints are awarded when you submit.
-        </div>
-        <div class="section-title">🏠 Pending pickups</div>
-        <div id="pickup-list"></div>
-      </div>
+      <div class="section-title">🏠 Pending pickups</div>
+      <div id="pickup-list"></div>
 
-      <div id="collector-panel-verified" hidden>
-        <div class="eco-tip" style="margin-bottom:12px">
-          <strong>Read-only</strong> · Completed verifications for <span id="collector-inline-verified-year"></span>. Logs leave Unverified once you verify.
-        </div>
-        <div class="section-title">Verified logs</div>
-        <div id="pickup-list-verified"></div>
-      </div>
+      <div class="section-title" style="margin-top:18px">✅ Completed household logs · <span id="collector-inline-verified-year"></span></div>
+      <div id="pickup-list-verified"></div>
     </div>
   </section>
 
@@ -573,11 +578,18 @@
   ==================================================== -->
   <section id="screen-admin" class="screen">
     <div class="page-header">
-      <div class="page-header-sub">🏢 Barangay Admin Dashboard</div>
-      <h1 id="admin-dashboard-location">Your barangay</h1>
+      <div class="page-header-sub">🏢 Barangay Admin</div>
+      <h1 id="admin-dashboard-location">Admin Dashboard</h1>
       <p id="admin-dashboard-address-line" class="admin-dashboard-address-line" hidden></p>
     </div>
     <div class="page-content">
+      <div class="log-form-tabs admin-dash-tabs" role="tablist" aria-label="Admin dashboard sections" style="margin-bottom:14px">
+        <button type="button" class="log-tab active" data-admin-tab="main" onclick="setAdminDashboardTab('main')">Main</button>
+        <button type="button" class="log-tab" data-admin-tab="rewards" onclick="setAdminDashboardTab('rewards')">Rewards</button>
+        <button type="button" class="log-tab" data-admin-tab="collectors" onclick="setAdminDashboardTab('collectors')">Collectors</button>
+      </div>
+
+      <div id="admin-panel-main">
       <!-- KPI Cards -->
       <div class="admin-kpi">
         <div class="kpi-card green">
@@ -622,14 +634,6 @@
       <div class="section-title">🏆 Top Households</div>
       <div id="admin-users"></div>
 
-      <!-- Collector collection proofs (household + collector photos) -->
-      <div class="section-title" style="margin-top:18px">📸 Collector collection proofs</div>
-      <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 10px;line-height:1.45">Household waste logs and photos collectors submit when pickup is completed.</p>
-      <div id="admin-waste-logs-list"></div>
-
-      <!-- Reward QR requests (filled by JS) -->
-      <div id="admin-reward-queue"></div>
-
       <!-- Admin Tools -->
       <div class="section-title">🛠️ Admin Tools</div>
       <div class="admin-tools-grid">
@@ -638,6 +642,16 @@
         <button type="button" class="btn btn-outline admin-tool-btn" id="btn-admin-report">📋 Full Report</button>
       </div>
       <div id="admin-tools-detail"></div>
+      </div><!-- /admin-panel-main -->
+
+      <div id="admin-panel-rewards" hidden>
+        <div id="admin-reward-queue"></div>
+      </div>
+
+      <div id="admin-panel-collectors" hidden>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Household waste logs and collection photos submitted by collectors.</p>
+        <div id="admin-waste-logs-list"></div>
+      </div>
     </div>
   </section>
 
@@ -913,7 +927,7 @@
         <input id="modal-log-date" class="form-control" type="date"/>
       </div>
       <div class="form-group">
-        <label for="modal-log-photo">Photo (JPG/PNG)</label>
+        <label for="modal-log-photo">Photo required (JPG/PNG)</label>
         <input id="modal-log-photo" class="form-control" type="file" accept="image/jpeg,image/png"/>
       </div>
       <button class="btn btn-primary" onclick="submitLog()">✅ Submit &amp; Earn EcoPoints</button>

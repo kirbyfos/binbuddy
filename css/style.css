@@ -1696,6 +1696,20 @@ a { text-decoration: none; color: inherit; }
   background: rgba(46, 139, 87, 0.15);
   color: var(--primary-dark);
 }
+
+/* ---- Home dashboard notifications tab ---- */
+.home-notif-card {
+  margin-bottom: 8px;
+}
+.home-notif-text {
+  font-size: 0.9rem;
+  line-height: 1.45;
+  margin-bottom: 4px;
+}
+.admin-dash-tabs,
+.home-dash-tabs {
+  margin-top: 4px;
+}
 .pickup-item {
   display: flex;
   align-items: center;

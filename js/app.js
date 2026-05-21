@@ -623,6 +623,7 @@ const ROLE_ALLOWED_SCREENS = {
     "about"
   ]),
   collector: new Set(["collector", "collector-history", "collector-profile"]),
+  /** collector-history kept for deep history screen; primary queue is merged on collector */
   admin: new Set(["admin", "admin-profile"])
 };
 
@@ -639,7 +640,7 @@ const HELP_TOUR_STEPS_HOUSEHOLD = [
     icon: "🏠",
     title: "Welcome, household",
     desc:
-      "Log each recyclable pickup (PET or HDPE) with weight and optional photo. When a collector verifies it, you earn EcoPoints you can later spend on rewards."
+      "Log each recyclable pickup (PET or HDPE) with weight and a required photo. When a collector verifies it, you earn EcoPoints you can redeem as e-money rewards."
   },
   {
     icon: "📊",
@@ -651,7 +652,7 @@ const HELP_TOUR_STEPS_HOUSEHOLD = [
     icon: "♻️",
     title: "Log Disposal",
     desc:
-      "Go to Log Disposal: choose PET or HDPE, set kilograms, add a photo if you like, pick the date, then submit. New entries stay Pending until verified."
+      "Go to Log Disposal: choose PET or HDPE, set kilograms, add a required photo, pick the date, then submit. New entries stay Pending until verified."
   },
   {
     icon: "📚",
@@ -663,7 +664,7 @@ const HELP_TOUR_STEPS_HOUSEHOLD = [
     icon: "🎁",
     title: "Rewards & Activity",
     desc:
-      "Rewards lists what you can redeem with EcoPoints. Activity Log keeps your app notifications handy in one place."
+      "Rewards lists e-money you can redeem with EcoPoints. The Notifications tab on your dashboard shows reward updates and other alerts."
   },
   {
     icon: "👤",
@@ -682,9 +683,9 @@ const HELP_TOUR_STEPS_COLLECTOR = [
   },
   {
     icon: "📥",
-    title: "Unverified vs Verified",
+    title: "Household logs",
     desc:
-      "Use Unverified in the menu for the pickup queue, and Verified to see completed verifications this year. The same tabs appear on your Pickup queue screen."
+      "Open Household logs in the menu to see pending pickups and completed logs in one place. Submit your collection photo for each pending log."
   },
   {
     icon: "🔍",
@@ -751,7 +752,8 @@ const AppState = {
   rewardQrSubmissions: [],
   notifications: [],
   /** Collector pickup screen: pending/rejected vs completed. */
-  collectorPickupTab: "unverified",
+  homeDashboardTab: "overview",
+  adminDashboardTab: "main",
   /** @type {Record<string, File>} pending collection proof files keyed by log id */
   collectorPendingPhotos: {}
 };
@@ -1905,9 +1907,9 @@ const VerificationService = {
 const RewardsService = {
   catalog() {
     return [
-      { id: "RWD-LOAD-50", name: "Mobile Load", display: "₱50 Load", cost: 500 },
-      { id: "RWD-VOUCH-100", name: "Voucher", display: "₱100 Voucher", cost: 1000 },
-      { id: "RWD-GCASH-75", name: "GCash", display: "₱75 GCash", cost: 750 }
+      { id: "RWD-EMONEY-50", name: "E-Money", display: "₱50 E-Money", cost: 500 },
+      { id: "RWD-EMONEY-100", name: "E-Money", display: "₱100 E-Money", cost: 1000 },
+      { id: "RWD-EMONEY-75", name: "E-Money", display: "₱75 E-Money", cost: 750 }
     ];
   },
   redeem(rewardId, user, qrDataUrl = null) {
@@ -2413,12 +2415,7 @@ function syncBottomNav(user, screen) {
     btn.classList.toggle("hidden", !isRoleMatch);
     const action = btn.dataset.action || "";
     const targetScreen = btn.dataset.nav || "";
-    const pickupTab = btn.dataset.collectorTab;
     let isActive = isRoleMatch && !action && targetScreen === screen;
-    if (isActive && screen === "collector" && pickupTab !== undefined && pickupTab !== "") {
-      const cur = AppState.collectorPickupTab === "verified" ? "verified" : "unverified";
-      isActive = pickupTab === cur;
-    }
     btn.classList.toggle("active", isActive);
   });
 }
@@ -2509,7 +2506,7 @@ function resolveLogDateValue() {
 function updatePhotoLabel(fileName) {
   const label = document.getElementById("manual-photo-label");
   if (!label) return;
-  label.textContent = fileName ? `Selected: ${fileName}` : "Tap to add photo proof (JPG/PNG)";
+  label.textContent = fileName ? `Selected: ${fileName}` : "Photo required — tap to add (JPG/PNG)";
 }
 
 async function readSelectedLogPhoto() {
@@ -2575,6 +2572,10 @@ async function submitLog() {
     photoFileName = selected.fileName;
   } catch (photoError) {
     showToast(photoError.message || "Invalid photo upload.");
+    return;
+  }
+  if (!photoDataUrl) {
+    showToast("A photo of your waste is required before you can submit a log.");
     return;
   }
 
@@ -2820,38 +2821,14 @@ function goToRewardsLeaderboard() {
   });
 }
 
-function setCollectorPickupTab(tab) {
-  AppState.collectorPickupTab = tab === "verified" ? "verified" : "unverified";
-  const sec = document.getElementById("screen-collector");
-  if (sec) {
-    sec.querySelectorAll(".collector-pickup-tabs .log-tab").forEach(b => {
-      const t = b.dataset.collectorTab === "verified" ? "verified" : "unverified";
-      b.classList.toggle("active", t === AppState.collectorPickupTab);
-    });
-  }
-  const user = AuthService.currentUser();
-  syncBottomNav(user, AppState.currentScreen);
+function setCollectorPickupTab(_tab) {
   renderCollectorView();
 }
 
 function renderCollectorView() {
   const list = document.getElementById("pickup-list");
   const listVerified = document.getElementById("pickup-list-verified");
-  const panelU = document.getElementById("collector-panel-unverified");
-  const panelV = document.getElementById("collector-panel-verified");
   if (!list || !listVerified) return;
-
-  const tab = AppState.collectorPickupTab === "verified" ? "verified" : "unverified";
-  if (panelU) panelU.hidden = tab !== "unverified";
-  if (panelV) panelV.hidden = tab !== "verified";
-
-  const sec = document.getElementById("screen-collector");
-  if (sec) {
-    sec.querySelectorAll(".collector-pickup-tabs .log-tab").forEach(b => {
-      const t = b.dataset.collectorTab === "verified" ? "verified" : "unverified";
-      b.classList.toggle("active", t === tab);
-    });
-  }
 
   const year = new Date().getFullYear();
   const yearEl = document.getElementById("collector-inline-verified-year");
@@ -2865,14 +2842,14 @@ function renderCollectorView() {
     .sort((a, b) => logReferenceInstant(b).getTime() - logReferenceInstant(a).getTime());
   list.innerHTML = active.length
     ? active.map(log => htmlCollectorPickupCard(log)).join("")
-    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No unverified pickups for ${year}. Verified logs appear in the Verified tab.</p>`;
+    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No pending household logs for ${year}.</p>`;
 
   bindCollectorPickupPhotoInputs();
 
   const verifiedSorted = sortedVerifiedLogsYear(AppState.logs, year);
   listVerified.innerHTML = verifiedSorted.length
     ? verifiedSorted.map(l => htmlVerifiedLogCardReadOnly(l)).join("")
-    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No verified logs for ${year} yet.</p>`;
+    : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No completed household logs for ${year} yet.</p>`;
 
   const statValues = document.querySelectorAll("#screen-collector .stat-value");
   if (statValues[0]) statValues[0].textContent = stats.verifiedCount;
@@ -3014,18 +2991,67 @@ function renderAdminDashboardHeader() {
   const user = AuthService.currentUser();
   if (!user || normalizeRole(user.role) !== "admin") return;
   const loc = document.getElementById("admin-dashboard-location");
-  if (loc) loc.textContent = getUserBarangayLabel(user);
+  if (loc) loc.textContent = "Admin Dashboard";
   const line = document.getElementById("admin-dashboard-address-line");
-  if (line) {
-    const addr = String(user.address || "").trim();
-    if (addr) {
-      line.textContent = addr;
-      line.hidden = false;
-    } else {
-      line.textContent = "";
-      line.hidden = true;
-    }
+  if (line) line.hidden = true;
+}
+
+function setAdminDashboardTab(tab) {
+  const t = tab === "rewards" || tab === "collectors" ? tab : "main";
+  AppState.adminDashboardTab = t;
+  const sec = document.getElementById("screen-admin");
+  if (sec) {
+    sec.querySelectorAll("[data-admin-tab]").forEach(b => {
+      b.classList.toggle("active", b.dataset.adminTab === t);
+    });
   }
+  const main = document.getElementById("admin-panel-main");
+  const rewards = document.getElementById("admin-panel-rewards");
+  const collectors = document.getElementById("admin-panel-collectors");
+  if (main) main.hidden = t !== "main";
+  if (rewards) rewards.hidden = t !== "rewards";
+  if (collectors) collectors.hidden = t !== "collectors";
+  if (t === "rewards") void renderAdminRewardQueue();
+  if (t === "collectors") {
+    renderAdminWasteLogs();
+    void hydrateAdminLogPhotoMounts();
+  }
+}
+
+function setHomeDashboardTab(tab) {
+  const t = tab === "notifications" ? "notifications" : "overview";
+  AppState.homeDashboardTab = t;
+  const sec = document.getElementById("screen-home");
+  if (sec) {
+    sec.querySelectorAll("[data-home-tab]").forEach(b => {
+      b.classList.toggle("active", b.dataset.homeTab === t);
+    });
+  }
+  const overview = document.getElementById("home-panel-overview");
+  const notif = document.getElementById("home-panel-notifications");
+  if (overview) overview.hidden = t !== "overview";
+  if (notif) notif.hidden = t !== "notifications";
+  if (t === "notifications") renderHomeNotificationsPanel();
+}
+
+function renderHomeNotificationsPanel() {
+  const el = document.getElementById("home-notif-list");
+  if (!el) return;
+  const user = AuthService.currentUser();
+  const rows = notificationsForUser(user).slice(0, 12);
+  if (!rows.length) {
+    el.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No updates yet. Reward sent notices and log verifications appear here.</p>`;
+    return;
+  }
+  el.innerHTML = rows
+    .map(
+      n => `
+    <div class="card home-notif-card">
+      <div class="home-notif-text">${escapeAdminText(n.text || "")}</div>
+      <small>${escapeAdminText(formatDateTime(n.createdAt || n.created_at))}</small>
+    </div>`
+    )
+    .join("");
 }
 
 function renderAdminProfileScreen() {
@@ -3036,7 +3062,7 @@ function renderAdminProfileScreen() {
   const addrEl = document.getElementById("admin-profile-address-line");
   const br = getUserBarangayLabel(user);
   if (nm) nm.textContent = user.name || "Administrator";
-  if (roleLine) roleLine.textContent = `Barangay Admin · ${br}`;
+  if (roleLine) roleLine.textContent = "Barangay Admin";
   if (addrEl) {
     const raw = String(user.address || "").trim();
     addrEl.innerHTML = `<strong>Address / barangay:</strong> ${raw || br || "—"}`;
@@ -3084,6 +3110,7 @@ function renderAdminWasteLogs() {
 
 function renderAdminAnalytics() {
   renderAdminDashboardHeader();
+  setAdminDashboardTab(AppState.adminDashboardTab || "main");
   if (apiMode && adminAnalyticsCache && adminAnalyticsCache.metrics) {
     const m = adminAnalyticsCache.metrics;
     const kpis = document.querySelectorAll("#screen-admin .kpi-card .kpi-value");
@@ -3141,7 +3168,7 @@ function renderAdminAnalytics() {
     const foot = document.getElementById("admin-chart-footnote");
     if (foot) {
       const u = AuthService.currentUser();
-      foot.textContent = `${adminAnalyticsCache.weekRangeLabel || AnalyticsService.rollingWeekCaption()} · ${getUserBarangayLabel(u)}`;
+      foot.textContent = `${adminAnalyticsCache.weekRangeLabel || AnalyticsService.rollingWeekCaption()} · program overview`;
     }
     return;
   }
@@ -3190,7 +3217,7 @@ function renderAdminAnalytics() {
   const footLoc = document.getElementById("admin-chart-footnote");
   if (footLoc) {
     const u = AuthService.currentUser();
-    footLoc.textContent = `${AnalyticsService.rollingWeekCaption()} · ${getUserBarangayLabel(u)}`;
+    footLoc.textContent = `${AnalyticsService.rollingWeekCaption()} · program overview`;
   }
 }
 
@@ -3751,7 +3778,7 @@ async function markAdminRewardRedemptionSent(id) {
   row.status = "sent";
   const display = row.rewardDisplay || "your reward";
   AppState.notifications.unshift({
-    text: `Your reward (${display}) has been sent by your barangay admin. Please check your load, voucher, or e-money account.`,
+    text: `Your e-money reward (${display}) has been sent by your barangay admin. Please check your e-money account.`,
     createdAt: nowIso(),
     userId: row.userId
   });
@@ -3774,7 +3801,7 @@ async function renderAdminRewardQueue() {
       const data = await apiFetch("/admin/reward-redemptions");
       const rows = data.requests || [];
       wrap.innerHTML =
-        `<div class="section-title" style="margin-top:16px">🎁 Reward requests (QR photos)</div>` +
+        `<div class="section-title" style="margin-top:0">🎁 Reward requests (e-money QR)</div>` +
         '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the household QR photo, fulfill the reward, then tap <strong>Mark as sent</strong> to notify them.</p>' +
         (rows.length
           ? rows.map(r => htmlAdminRewardRequestCard(r)).join("")
@@ -4659,10 +4686,6 @@ function initNavigation() {
         return;
       }
       const screen = btn.dataset.nav;
-      if (screen === "collector") {
-        const subt = btn.dataset.collectorTab;
-        AppState.collectorPickupTab = subt === "verified" ? "verified" : "unverified";
-      }
       if (screen) goTo(screen);
       header?.classList.remove("is-open");
       burger?.setAttribute("aria-expanded", "false");
@@ -4750,6 +4773,7 @@ function refreshUI() {
   renderHomeGreeting();
   renderUserAddress();
   renderHomeDisposalRank();
+  setHomeDashboardTab(AppState.homeDashboardTab || "overview");
   renderRewardsBarangay();
   renderProfile();
   renderCollectorProfileShell();
@@ -4762,8 +4786,8 @@ function refreshUI() {
   renderLeaderboard();
   renderAdminAnalytics();
   renderAdminProfileScreen();
-  renderAdminWasteLogs();
-  void renderAdminRewardQueue();
+  if ((AppState.adminDashboardTab || "main") === "collectors") renderAdminWasteLogs();
+  if ((AppState.adminDashboardTab || "main") === "rewards") void renderAdminRewardQueue();
   initRewards();
   persistState();
 }
@@ -4775,7 +4799,8 @@ function clearRuntimeUserContext() {
   AppState.currentScreen = "auth";
   AppState.logType = "bio";
   AppState.logQty = 1.0;
-  AppState.collectorPickupTab = "unverified";
+  AppState.homeDashboardTab = "overview";
+  AppState.adminDashboardTab = "main";
 }
 
 function logout(showMessage = true, requireConfirmation = false) {
@@ -4898,6 +4923,8 @@ window.initRewards = initRewards;
 window.handleCollectorDecision = handleCollectorDecision;
 window.handleCollectorSubmitProof = handleCollectorSubmitProof;
 window.setCollectorPickupTab = setCollectorPickupTab;
+window.setHomeDashboardTab = setHomeDashboardTab;
+window.setAdminDashboardTab = setAdminDashboardTab;
 window.beginRewardSubmission = beginRewardSubmission;
 window.cancelRewardSubmission = cancelRewardSubmission;
 window.selectModalType = selectModalType;

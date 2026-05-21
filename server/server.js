@@ -65,9 +65,9 @@ const mapRoleForClient = (role) => {
 const transient = {
     notifications: [],
     rewards: [
-        { id: 'RWD-LOAD-50', display: 'P50 Load', cost: 500 },
-        { id: 'RWD-VOUCH-100', display: 'P100 Voucher', cost: 1000 },
-        { id: 'RWD-GCASH-75', display: 'P75 GCash', cost: 750 }
+        { id: 'RWD-EMONEY-50', display: '₱50 E-Money', cost: 500 },
+        { id: 'RWD-EMONEY-100', display: '₱100 E-Money', cost: 1000 },
+        { id: 'RWD-EMONEY-75', display: '₱75 E-Money', cost: 750 }
     ]
 };
 
@@ -771,6 +771,11 @@ app.post('/api/logs', authRequired, requireDb, requireRoles('household'), async 
             console.error('❌ POST /logs photo:', photoErr.message);
             return res.status(400).json({ message: photoErr.message || 'Invalid photo' });
         }
+        if (!photoFilename) {
+            return res.status(400).json({
+                message: 'Waste log photo is required. Add a JPG or PNG image of your segregated waste.'
+            });
+        }
 
         const [urows] = await pool.query(`SELECT ${usersIdColumn()} AS id, full_name, email FROM users WHERE ${usersIdColumn()} = ?`, [
             uid
@@ -969,7 +974,7 @@ app.post(
             }
         };
         try {
-            if (!req.file) return res.status(400).json({ message: 'Photo required — take or choose a picture of your QR code.' });
+            if (!req.file) return res.status(400).json({ message: 'Photo required — take or choose a picture of your e-money QR code.' });
 
             const rewardId = String(req.body?.rewardId ?? req.body?.reward_id ?? '').trim();
             const reward = transient.rewards.find((r) => r.id === rewardId);
@@ -1099,7 +1104,7 @@ app.patch('/api/admin/reward-redemptions/:id/sent', authRequired, requireDb, req
             await pool.query(`UPDATE reward_redemptions SET status = 'sent' WHERE redemption_id = ?`, [rid]);
         }
 
-        const msg = `Your reward (${display}) has been sent by your barangay admin. Please check your load, voucher, or e-money account.`;
+        const msg = `Your e-money reward (${display}) has been sent by your barangay admin. Please check your e-money account.`;
         const exists = transient.notifications.some(
             (n) => String(n.userId) === String(uid) && String(n.redemptionId || '') === rid
         );

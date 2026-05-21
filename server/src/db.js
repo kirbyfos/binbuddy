@@ -168,9 +168,9 @@ function seedIfEmpty() {
 
   db.prepare(`
     INSERT INTO rewards (reward_code, name, display_label, points_required, category) VALUES
-    ('RWD-LOAD-50', 'Mobile Load', '₱50 Load', 500, 'load'),
-    ('RWD-VOUCH-100', 'Voucher', '₱100 Voucher', 1000, 'voucher'),
-    ('RWD-GCASH-75', 'GCash', '₱75 GCash', 750, 'gcash')
+    ('RWD-EMONEY-50', 'E-Money', '₱50 E-Money', 500, 'emoney'),
+    ('RWD-EMONEY-100', 'E-Money', '₱100 E-Money', 1000, 'emoney'),
+    ('RWD-EMONEY-75', 'E-Money', '₱75 E-Money', 750, 'emoney')
   `).run();
 }
 
