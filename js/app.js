@@ -1934,6 +1934,7 @@ const RewardsService = {
         rewardDisplay: reward.display,
         cost: reward.cost,
         qrDataUrl,
+        status: "pending",
         createdAt: nowIso()
       });
     }
@@ -3682,6 +3683,83 @@ async function submitRewardRedemptionWithPhoto(rewardId, file, opts = {}) {
   });
 }
 
+function adminRewardStatusBadge(status) {
+  const s = String(status || "pending").toLowerCase();
+  if (s === "sent") {
+    return `<span class="admin-reward-status admin-reward-status--sent">✅ Sent to household</span>`;
+  }
+  return `<span class="admin-reward-status admin-reward-status--pending">⏳ Pending fulfillment</span>`;
+}
+
+function htmlAdminRewardRequestCard(r) {
+  const id = escapeAdminText(r.id);
+  const sent = String(r.status || "pending").toLowerCase() === "sent";
+  const sentBtn = sent
+    ? `<button type="button" class="btn btn-outline" disabled title="Household already notified">✅ Sent</button>`
+    : `<button type="button" class="btn btn-primary" data-rdm-sent="${id}">📤 Mark as sent</button>`;
+  const dlBtn = apiMode && getToken()
+    ? `<button type="button" class="btn btn-outline" data-rdm-dl="${id}">⬇️ Download QR photo</button>`
+    : r.qrDataUrl
+      ? `<a class="btn btn-outline" style="text-decoration:none" download="qr-${escapeAdminText(String(r.id).replace(/[^\w-]+/g, "_"))}.jpg" href="${String(r.qrDataUrl || "").replace(/&/g, "&amp;")}">⬇️ Download QR photo</a>`
+      : "";
+  return `
+    <div class="card admin-reward-request-card" style="margin-bottom:8px" data-rdm-id="${id}">
+      <div class="admin-reward-request-head">
+        <div style="min-width:0">
+          <strong>${escapeAdminText(r.userName || "User")}</strong>
+          ${adminRewardStatusBadge(r.status)}
+          <small style="display:block;color:var(--text-muted)">${escapeAdminText(r.rewardDisplay || "")} · ${Number(r.cost || 0)} pts · ID ${id}</small>
+          <small style="display:block;color:var(--text-muted)">${escapeAdminText(formatDateTime(r.createdAt))}</small>
+        </div>
+        <div class="admin-reward-request-actions">
+          ${dlBtn}
+          ${sentBtn}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function markAdminRewardRedemptionSent(id) {
+  if (!id) return;
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") {
+    showToast("Admin access only.");
+    return;
+  }
+  if (apiMode && getToken()) {
+    try {
+      const data = await apiFetch(`/admin/reward-redemptions/${encodeURIComponent(id)}/sent`, {
+        method: "PATCH"
+      });
+      showToast(data.message || "Household notified that their reward was sent.");
+      await renderAdminRewardQueue();
+      return;
+    } catch (e) {
+      showToast(e.message || "Could not mark as sent.");
+      return;
+    }
+  }
+  const row = (AppState.rewardQrSubmissions || []).find(x => String(x.id) === String(id));
+  if (!row) {
+    showToast("Request not found.");
+    return;
+  }
+  if (String(row.status || "").toLowerCase() === "sent") {
+    showToast("Household was already notified.");
+    return;
+  }
+  row.status = "sent";
+  const display = row.rewardDisplay || "your reward";
+  AppState.notifications.unshift({
+    text: `Your reward (${display}) has been sent by your barangay admin. Please check your load, voucher, or e-money account.`,
+    createdAt: nowIso(),
+    userId: row.userId
+  });
+  persistState();
+  showToast("Household notified (offline demo).");
+  await renderAdminRewardQueue();
+}
+
 async function renderAdminRewardQueue() {
   const wrap = document.getElementById("admin-reward-queue");
   if (!wrap) return;
@@ -3697,26 +3775,18 @@ async function renderAdminRewardQueue() {
       const rows = data.requests || [];
       wrap.innerHTML =
         `<div class="section-title" style="margin-top:16px">🎁 Reward requests (QR photos)</div>` +
-        "<p style=\"font-size:0.82rem;color:var(--text-muted);margin:0 0 12px\">Households attach a QR image; download and fulfill outside the app.</p>" +
+        '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the household QR photo, fulfill the reward, then tap <strong>Mark as sent</strong> to notify them.</p>' +
         (rows.length
-          ? rows
-              .map(
-                r => `
-        <div class="card" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
-          <div style="min-width:0">
-            <strong>${escapeAdminText(r.userName || "User")}</strong>
-            <small style="display:block;color:var(--text-muted)">${escapeAdminText(r.rewardDisplay || "")} · ${Number(r.cost || 0)} pts · ID ${escapeAdminText(r.id)}</small>
-            <small style="display:block;color:var(--text-muted)">${escapeAdminText(formatDateTime(r.createdAt))}</small>
-          </div>
-          <button type="button" class="btn btn-outline" style="flex-shrink:0" data-rdm-dl="${escapeAdminText(r.id)}">⬇️ Download QR photo</button>
-        </div>`
-              )
-              .join("")
+          ? rows.map(r => htmlAdminRewardRequestCard(r)).join("")
           : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No reward requests yet.</p>`);
       wrap.onclick = e => {
-        const btn = e.target.closest("[data-rdm-dl]");
-        if (!btn) return;
-        void downloadAdminRewardRedemptionPhoto(btn.getAttribute("data-rdm-dl"));
+        const dl = e.target.closest("[data-rdm-dl]");
+        if (dl) {
+          void downloadAdminRewardRedemptionPhoto(dl.getAttribute("data-rdm-dl"));
+          return;
+        }
+        const sent = e.target.closest("[data-rdm-sent]");
+        if (sent) void markAdminRewardRedemptionSent(sent.getAttribute("data-rdm-sent"));
       };
     } catch (_e) {
       wrap.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted)">Could not load reward requests.</p>`;
@@ -3727,22 +3797,14 @@ async function renderAdminRewardQueue() {
   const rows = AppState.rewardQrSubmissions || [];
   wrap.innerHTML =
     `<div class="section-title" style="margin-top:16px">🎁 Reward requests (QR · offline demo)</div>` +
+    '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the QR, fulfill the reward, then tap <strong>Mark as sent</strong> to notify the household.</p>' +
     (rows.length
-      ? rows
-          .map(
-            r => `
-    <div class="card" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
-      <div style="min-width:0">
-        <strong>${escapeAdminText(r.userName || "User")}</strong>
-        <small style="display:block;color:var(--text-muted)">${escapeAdminText(r.rewardDisplay || "")} · ${Number(r.cost || 0)} pts</small>
-        <small style="display:block;color:var(--text-muted)">${escapeAdminText(formatDateTime(r.createdAt))}</small>
-      </div>
-      <a class="btn btn-outline" style="flex-shrink:0;text-decoration:none" download="qr-${escapeAdminText(String(r.id).replace(/[^\w-]+/g, "_"))}.jpg" href="${String(r.qrDataUrl || "").replace(/&/g, "&amp;")}">⬇️ Download QR photo</a>
-    </div>`
-          )
-          .join("")
+      ? rows.map(r => htmlAdminRewardRequestCard(r)).join("")
       : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No reward requests yet.</p>`);
-  wrap.onclick = null;
+  wrap.onclick = e => {
+    const sent = e.target.closest("[data-rdm-sent]");
+    if (sent) void markAdminRewardRedemptionSent(sent.getAttribute("data-rdm-sent"));
+  };
 }
 
 async function downloadAdminRewardRedemptionPhoto(id) {

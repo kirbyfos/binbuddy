@@ -1003,8 +1003,8 @@ app.post(
             const userEmail = String(urow.email || '');
             try {
                 await pool.query(
-                    `INSERT INTO reward_redemptions (redemption_id, user_id, user_name, user_email, reward_id, reward_display, cost_points, photo_filename)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    `INSERT INTO reward_redemptions (redemption_id, user_id, user_name, user_email, reward_id, reward_display, cost_points, photo_filename, status)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
                     [
                         redemptionId,
                         urow.id,
@@ -1055,6 +1055,7 @@ app.get('/api/admin/reward-redemptions', authRequired, requireDb, requireRoles('
               reward_id AS rewardId,
               reward_display AS rewardDisplay,
               cost_points AS cost,
+              status,
               created_at AS createdAtRaw
             FROM reward_redemptions
             ORDER BY created_at DESC
@@ -1069,11 +1070,65 @@ app.get('/api/admin/reward-redemptions', authRequired, requireDb, requireRoles('
             rewardId: r.rewardId,
             rewardDisplay: r.rewardDisplay,
             cost: r.cost,
+            status: String(r.status || 'pending').toLowerCase(),
             createdAt: r.createdAtRaw ? new Date(r.createdAtRaw).toISOString() : null
         }));
         res.json({ requests });
     } catch (_e) {
         res.status(500).json({ requests: [], message: 'Could not load redemptions.' });
+    }
+});
+
+app.patch('/api/admin/reward-redemptions/:id/sent', authRequired, requireDb, requireRoles('admin'), async (req, res) => {
+    try {
+        const rid = String(req.params.id || '').trim();
+        if (!rid) return res.status(400).json({ message: 'Redemption id required.' });
+
+        const [[row]] = await pool.query(
+            `SELECT redemption_id, user_id, user_name, reward_display, cost_points, status
+             FROM reward_redemptions WHERE redemption_id = ? LIMIT 1`,
+            [rid]
+        );
+        if (!row) return res.status(404).json({ message: 'Redemption not found.' });
+
+        const display = String(row.reward_display || 'your reward').trim();
+        const uid = row.user_id;
+        const alreadySent = String(row.status || '').toLowerCase() === 'sent';
+
+        if (!alreadySent) {
+            await pool.query(`UPDATE reward_redemptions SET status = 'sent' WHERE redemption_id = ?`, [rid]);
+        }
+
+        const msg = `Your reward (${display}) has been sent by your barangay admin. Please check your load, voucher, or e-money account.`;
+        const exists = transient.notifications.some(
+            (n) => String(n.userId) === String(uid) && String(n.redemptionId || '') === rid
+        );
+        if (!exists) {
+            transient.notifications.unshift({
+                userId: String(uid),
+                text: msg,
+                createdAt: new Date().toISOString(),
+                redemptionId: rid
+            });
+        }
+
+        return res.json({
+            ok: true,
+            alreadySent,
+            request: {
+                id: rid,
+                userId: uid,
+                userName: row.user_name,
+                rewardDisplay: display,
+                cost: Number(row.cost_points || 0),
+                status: 'sent',
+                createdAt: null
+            },
+            message: alreadySent ? 'Household was already notified.' : 'Household notified that their reward was sent.'
+        });
+    } catch (err) {
+        console.error('❌ PATCH reward sent:', err?.message || err);
+        return res.status(500).json({ message: err?.message || 'Could not mark reward as sent.' });
     }
 });
 

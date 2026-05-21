@@ -1661,6 +1661,41 @@ a { text-decoration: none; color: inherit; }
   color: var(--text-muted);
   padding: 8px 0;
 }
+
+/* ---- Admin reward requests ---- */
+.admin-reward-request-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.admin-reward-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.admin-reward-request-actions .btn {
+  min-width: 148px;
+}
+.admin-reward-status {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.admin-reward-status--pending {
+  background: rgba(243, 156, 18, 0.15);
+  color: #b7791f;
+}
+.admin-reward-status--sent {
+  background: rgba(46, 139, 87, 0.15);
+  color: var(--primary-dark);
+}
 .pickup-item {
   display: flex;
   align-items: center;
