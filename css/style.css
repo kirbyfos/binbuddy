@@ -1569,6 +1569,98 @@ a { text-decoration: none; color: inherit; }
   object-fit: cover;
   opacity: 0.5;
 }
+.collector-pickup-card {
+  margin-bottom: 12px;
+  padding: 14px;
+}
+.collector-pickup-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.collector-pickup-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.collector-pickup-photos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.collector-pickup-photos--compact {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+@media (max-width: 520px) {
+  .collector-pickup-photos {
+    grid-template-columns: 1fr;
+  }
+}
+.collector-photo-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  min-height: 120px;
+}
+.collector-photo-panel--upload {
+  display: flex;
+  flex-direction: column;
+}
+.collector-upload-zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+  border: 2px dashed rgba(46, 139, 87, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(232, 247, 236, 0.35);
+  cursor: pointer;
+  text-align: center;
+  padding: 10px;
+}
+.collector-upload-zone input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.collector-upload-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.collector-proof-preview {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+  margin-top: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.collector-pickup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.collector-pickup-actions .btn {
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+.bb-proof-wrap--empty {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
 .pickup-item {
   display: flex;
   align-items: center;

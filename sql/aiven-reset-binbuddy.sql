@@ -46,6 +46,8 @@ CREATE TABLE waste_logs (
   eco_points_awarded  INT NOT NULL DEFAULT 0,
   verified_by         INT UNSIGNED DEFAULT NULL,
   notes               TEXT,
+  photo_filename      VARCHAR(255) NULL DEFAULT NULL,
+  collector_photo_filename VARCHAR(255) NULL DEFAULT NULL,
   log_date            DATETIME DEFAULT NULL,
   created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
   completed_at        DATETIME DEFAULT NULL,

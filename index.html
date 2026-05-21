@@ -534,7 +534,10 @@
       </div>
 
       <div id="collector-panel-unverified">
-        <div class="section-title">🏠 Pending pickup — verify</div>
+        <div class="eco-tip" style="margin-bottom:12px">
+          <strong>Photo-based pickup</strong> — Review the household’s waste log photo, take a photo of the collected waste, then <strong>Submit collection proof to admin</strong>. EcoPoints are awarded when you submit.
+        </div>
+        <div class="section-title">🏠 Pending pickups</div>
         <div id="pickup-list"></div>
       </div>
 
@@ -618,6 +621,11 @@
       <!-- Top Households -->
       <div class="section-title">🏆 Top Households</div>
       <div id="admin-users"></div>
+
+      <!-- Collector collection proofs (household + collector photos) -->
+      <div class="section-title" style="margin-top:18px">📸 Collector collection proofs</div>
+      <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 10px;line-height:1.45">Household waste logs and photos collectors submit when pickup is completed.</p>
+      <div id="admin-waste-logs-list"></div>
 
       <!-- Reward QR requests (filled by JS) -->
       <div id="admin-reward-queue"></div>

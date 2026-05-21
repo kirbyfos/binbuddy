@@ -678,7 +678,7 @@ const HELP_TOUR_STEPS_COLLECTOR = [
     icon: "🚛",
     title: "Welcome, collector",
     desc:
-      "You review pickups households submitted online. Verified logs award them EcoPoints; your job is to confirm the waste matches the log (using their photo when they attached one)."
+      "You review household waste logs with photos, take your own photo when you collect the waste, and submit collection proof to the barangay admin. EcoPoints are awarded when you submit."
   },
   {
     icon: "📥",
@@ -688,9 +688,9 @@ const HELP_TOUR_STEPS_COLLECTOR = [
   },
   {
     icon: "🔍",
-    title: "How to verify",
+    title: "Submit collection proof",
     desc:
-      "Open each card, check household details and optional photo proof, then tap Verify. Cards leave Unverified after you verify—they move to Verified and History."
+      "On each pickup card, review the household photo, add your own photo of the collected waste, then tap Submit collection proof to admin. Use Report issue only if segregation is wrong."
   },
   {
     icon: "📋",
@@ -751,7 +751,9 @@ const AppState = {
   rewardQrSubmissions: [],
   notifications: [],
   /** Collector pickup screen: pending/rejected vs completed. */
-  collectorPickupTab: "unverified"
+  collectorPickupTab: "unverified",
+  /** @type {Record<string, File>} pending collection proof files keyed by log id */
+  collectorPendingPhotos: {}
 };
 
 function normalizeRole(role) {
@@ -924,23 +926,88 @@ async function setAuthenticatedImageSrc(img, apiRelativePath) {
   img.src = url;
 }
 
-/** Photo proof submitted with the household log (collector / offline local). */
-function collectorProofMarkup(log) {
-  const id = String(log.id || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+function escapeLogIdAttr(logId) {
+  return String(logId || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** Household waste-log photo (submitted with the log). */
+function householdLogPhotoMarkup(log) {
+  const id = escapeLogIdAttr(log.id);
   const hasData = log.photoPath && String(log.photoPath).startsWith("data:image/");
   if (apiMode && getToken() && log.hasPhoto && id) {
-    return `<div class="bb-proof-wrap">
-        <p class="bb-proof-label"><small>Household photo</small></p>
+    return `<div class="bb-proof-wrap bb-proof-wrap--household">
+        <p class="bb-proof-label"><small>Household waste log photo</small></p>
         <div class="bb-proof-mount" data-log-id="${id}" data-auth-photo="1"></div>
       </div>`;
   }
   if (hasData) {
-    return `<div class="bb-proof-wrap">
-        <p class="bb-proof-label"><small>Household photo</small></p>
-        <img class="collector-proof-img" alt="Household photo proof" src=${JSON.stringify(log.photoPath)} />
+    return `<div class="bb-proof-wrap bb-proof-wrap--household">
+        <p class="bb-proof-label"><small>Household waste log photo</small></p>
+        <img class="collector-proof-img" alt="Household waste log photo" src=${JSON.stringify(log.photoPath)} />
+      </div>`;
+  }
+  return `<div class="bb-proof-wrap bb-proof-wrap--empty"><p class="bb-proof-label"><small>No household photo on this log</small></p></div>`;
+}
+
+/** Collector collection proof sent to admin after pickup. */
+function collectorCollectionProofMarkup(log) {
+  const id = escapeLogIdAttr(log.id);
+  const hasData = log.collectorPhotoPath && String(log.collectorPhotoPath).startsWith("data:image/");
+  if (apiMode && getToken() && log.hasCollectorPhoto && id) {
+    return `<div class="bb-proof-wrap bb-proof-wrap--collector">
+        <p class="bb-proof-label"><small>Collector collection proof (sent to admin)</small></p>
+        <div class="bb-proof-mount" data-log-id="${id}" data-auth-collector-photo="1"></div>
+      </div>`;
+  }
+  if (hasData) {
+    return `<div class="bb-proof-wrap bb-proof-wrap--collector">
+        <p class="bb-proof-label"><small>Collector collection proof (sent to admin)</small></p>
+        <img class="collector-proof-img" alt="Collector collection proof" src=${JSON.stringify(log.collectorPhotoPath)} />
       </div>`;
   }
   return "";
+}
+
+/** @deprecated use householdLogPhotoMarkup */
+function collectorProofMarkup(log) {
+  return householdLogPhotoMarkup(log);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(new Error("Could not read photo file."));
+    r.readAsDataURL(file);
+  });
+}
+
+function htmlCollectorPickupCard(log) {
+  const id = escapeLogIdAttr(log.id);
+  const safeJsId = String(log.id || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const household = householdLogPhotoMarkup(log);
+  return `
+    <div class="card collector-pickup-card" data-log-id="${id}">
+      <div class="collector-pickup-head">
+        <strong>${log.userName}</strong>
+        <span class="collector-pickup-meta">${log.type} · ${log.weight} kg · Pending</span>
+      </div>
+      <div class="collector-pickup-photos">
+        <div class="collector-photo-panel">${household}</div>
+        <div class="collector-photo-panel collector-photo-panel--upload">
+          <p class="bb-proof-label"><small>Your collection proof (required)</small></p>
+          <label class="collector-upload-zone" for="collector-proof-file-${id}">
+            <span class="collector-upload-hint">📷 Tap to take or choose photo</span>
+            <input type="file" id="collector-proof-file-${id}" class="collector-proof-input" data-log-id="${id}" accept="image/jpeg,image/png,image/*" />
+          </label>
+          <img class="collector-proof-preview hidden" id="collector-proof-preview-${id}" alt="Collection proof preview" />
+        </div>
+      </div>
+      <div class="collector-pickup-actions">
+        <button type="button" class="btn btn-primary" onclick="handleCollectorSubmitProof('${safeJsId}')">Submit collection proof to admin</button>
+        <button type="button" class="btn btn-outline" onclick="handleCollectorDecision('${safeJsId}',false)">Report issue</button>
+      </div>
+    </div>`;
 }
 
 /** Human-readable verifier for log cards (signed-in collector, API `verifiedByName`, AppState users, else id). */
@@ -962,37 +1029,57 @@ function wasteLogVerifierDisplayName(log) {
   return String(uid);
 }
 
-async function hydrateCollectorLogPhotoMounts() {
-  const user = AuthService.currentUser();
-  if (!user || normalizeRole(user.role) !== "collector") return;
+async function hydrateLogPhotoMounts(rootSelector) {
   if (!apiMode || !getToken()) return;
-  const roots = document.querySelectorAll(
-    "#screen-collector, #screen-collector-history, #screen-collector-profile"
-  );
+  const roots = document.querySelectorAll(rootSelector);
   for (const root of roots) {
-    const mounts = root.querySelectorAll('.bb-proof-mount[data-auth-photo="1"]');
-    for (const mount of mounts) {
+    const householdMounts = root.querySelectorAll('.bb-proof-mount[data-auth-photo="1"]');
+    for (const mount of householdMounts) {
       if (mount.querySelector("img")) continue;
       const rawId = mount.getAttribute("data-log-id");
       if (!rawId) continue;
       const img = document.createElement("img");
       img.className = "collector-proof-img";
-      img.alt = "Household photo proof";
+      img.alt = "Household waste log photo";
       mount.appendChild(img);
       await setAuthenticatedImageSrc(img, `/logs/${encodeURIComponent(rawId)}/photo`);
     }
+    const collectorMounts = root.querySelectorAll('.bb-proof-mount[data-auth-collector-photo="1"]');
+    for (const mount of collectorMounts) {
+      if (mount.querySelector("img")) continue;
+      const rawId = mount.getAttribute("data-log-id");
+      if (!rawId) continue;
+      const img = document.createElement("img");
+      img.className = "collector-proof-img";
+      img.alt = "Collector collection proof";
+      mount.appendChild(img);
+      await setAuthenticatedImageSrc(img, `/logs/${encodeURIComponent(rawId)}/collector-photo`);
+    }
   }
+}
+
+async function hydrateCollectorLogPhotoMounts() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "collector") return;
+  await hydrateLogPhotoMounts("#screen-collector, #screen-collector-history, #screen-collector-profile");
+}
+
+async function hydrateAdminLogPhotoMounts() {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") return;
+  await hydrateLogPhotoMounts("#screen-admin");
 }
 
 function htmlVerifiedLogCardReadOnly(log, opts = {}) {
   const showVerifier = opts.showVerifier !== false;
   const vName = showVerifier ? wasteLogVerifierDisplayName(log) : "";
   const verifier = vName ? ` · Verified by ${vName}` : "";
-  const proof = collectorProofMarkup(log);
+  const household = householdLogPhotoMarkup(log);
+  const collection = collectorCollectionProofMarkup(log);
   return `
-      <div class="card" style="margin-bottom:8px">
+      <div class="card collector-verified-card" style="margin-bottom:8px">
         <strong>${log.userName}</strong> • ${log.type} • ${log.weight} kg<br/>
-        ${proof}
+        <div class="collector-pickup-photos collector-pickup-photos--compact">${household}${collection}</div>
         <small>${formatDateTime(log.completedAt || log.createdAt)}${log.ecoPointsAwarded ? ` · +${log.ecoPointsAwarded} pts` : ""}${verifier}</small>
       </div>
     `;
@@ -1762,9 +1849,12 @@ const WasteLogService = {
 };
 
 const VerificationService = {
-  verifyLog(logId, isVerified, collectorId, collectorDisplayName) {
+  verifyLog(logId, isVerified, collectorId, collectorDisplayName, collectorPhotoPath) {
     const log = AppState.logs.find(l => l.id === logId);
     if (!log) return null;
+    if (isVerified && !collectorPhotoPath) {
+      return null;
+    }
     const verifierLabel = (() => {
       const s = collectorDisplayName != null ? String(collectorDisplayName).trim() : "";
       if (s) return s;
@@ -1794,6 +1884,8 @@ const VerificationService = {
     log.verifiedBy = collectorId;
     if (verifierLabel) log.verifiedByName = verifierLabel;
     log.completedAt = nowIso();
+    log.collectorPhotoPath = collectorPhotoPath || null;
+    log.hasCollectorPhoto = Boolean(collectorPhotoPath);
     log.ecoPointsAwarded = Math.round(log.weight * (log.type === "PET" ? 20 : 25));
     const user = AppState.users.find(u => sameUserId(u.id, log.userId));
     if (user) {
@@ -2771,21 +2863,10 @@ function renderCollectorView() {
     .slice()
     .sort((a, b) => logReferenceInstant(b).getTime() - logReferenceInstant(a).getTime());
   list.innerHTML = active.length
-    ? active
-        .map(
-          log => `
-    <div class="card" style="margin-bottom:10px">
-      <strong>${log.userName}</strong> • ${log.type} • ${log.weight} kg<br/>
-      <small>Pending · ${logCalendarYear(log)}</small>
-      ${collectorProofMarkup(log)}
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn btn-primary" onclick="handleCollectorDecision('${log.id}',true)">Verify</button>
-      </div>
-    </div>
-  `
-        )
-        .join("")
+    ? active.map(log => htmlCollectorPickupCard(log)).join("")
     : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No unverified pickups for ${year}. Verified logs appear in the Verified tab.</p>`;
+
+  bindCollectorPickupPhotoInputs();
 
   const verifiedSorted = sortedVerifiedLogsYear(AppState.logs, year);
   listVerified.innerHTML = verifiedSorted.length
@@ -2797,34 +2878,120 @@ function renderCollectorView() {
   if (statValues[1]) statValues[1].textContent = stats.pending;
 }
 
+function bindCollectorPickupPhotoInputs() {
+  document.querySelectorAll("#pickup-list .collector-proof-input").forEach(input => {
+    if (input.dataset.bbBound === "1") return;
+    input.dataset.bbBound = "1";
+    input.addEventListener("change", async () => {
+      const logId = input.getAttribute("data-log-id");
+      const file = input.files && input.files[0];
+      const preview = document.getElementById(`collector-proof-preview-${logId}`);
+      if (!file) {
+        delete AppState.collectorPendingPhotos[logId];
+        if (preview) {
+          preview.classList.add("hidden");
+          preview.removeAttribute("src");
+        }
+        return;
+      }
+      if (!/^image\//i.test(file.type || "")) {
+        showToast("Please choose a JPG or PNG image.");
+        input.value = "";
+        return;
+      }
+      AppState.collectorPendingPhotos[logId] = file;
+      if (preview) {
+        try {
+          preview.src = await readFileAsDataUrl(file);
+          preview.classList.remove("hidden");
+        } catch (_e) {
+          preview.classList.add("hidden");
+        }
+      }
+    });
+  });
+}
+
+async function handleCollectorSubmitProof(logId) {
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "collector") {
+    showToast("Collector login required.");
+    return;
+  }
+  const file = AppState.collectorPendingPhotos[logId];
+  if (!file) {
+    showToast("Add a collection photo before submitting to admin.");
+    return;
+  }
+
+  if (apiMode && getToken()) {
+    try {
+      const fd = new FormData();
+      fd.append("photo", file, file.name || "collection.jpg");
+      await apiFetchMultipart(`/logs/${encodeURIComponent(logId)}/collection-proof`, fd, {
+        method: "POST"
+      });
+      delete AppState.collectorPendingPhotos[logId];
+      await syncFromServer();
+      showToast("Collection proof sent to admin. EcoPoints awarded to household.");
+      refreshUI();
+      return;
+    } catch (e) {
+      showToast(e.message || "Could not submit collection proof.");
+      return;
+    }
+  }
+
+  let collectorPhotoPath = null;
+  try {
+    collectorPhotoPath = await readFileAsDataUrl(file);
+  } catch (e) {
+    showToast(e.message || "Could not read photo.");
+    return;
+  }
+  const updated = VerificationService.verifyLog(
+    logId,
+    true,
+    user.id,
+    user.name || user.email || "",
+    collectorPhotoPath
+  );
+  if (!updated) {
+    showToast("Log not found.");
+    return;
+  }
+  delete AppState.collectorPendingPhotos[logId];
+  showToast("Collection proof saved. EcoPoints awarded to household.");
+  refreshUI();
+}
+
 async function handleCollectorDecision(logId, isVerified) {
   const user = AuthService.currentUser();
   if (!user || normalizeRole(user.role) !== "collector") {
     showToast("Collector login required.");
     return;
   }
+  if (isVerified) {
+    return handleCollectorSubmitProof(logId);
+  }
   if (apiMode && getToken()) {
     try {
       await apiFetch(`/logs/${encodeURIComponent(logId)}/verify`, {
         method: "PATCH",
-        body: JSON.stringify({ approve: Boolean(isVerified) })
+        body: JSON.stringify({ approve: false })
       });
       await syncFromServer();
-      showToast(
-        isVerified
-          ? "Verified — log is on the Verified tab."
-          : "Marked as not segregated — stays on Unverified until resolved."
-      );
+      showToast("Marked as not segregated — household notified.");
       refreshUI();
       return;
     } catch (e) {
-      showToast(e.message || "Verification failed.");
+      showToast(e.message || "Could not update log.");
       return;
     }
   }
   const updated = VerificationService.verifyLog(
     logId,
-    isVerified,
+    false,
     user.id,
     user.name || user.email || ""
   );
@@ -2832,11 +2999,7 @@ async function handleCollectorDecision(logId, isVerified) {
     showToast("Log not found.");
     return;
   }
-  showToast(
-    isVerified
-      ? "Verified — log is on the Verified tab."
-      : "Marked as not segregated — stays on Unverified until resolved."
-  );
+  showToast("Marked as not segregated — household notified.");
   refreshUI();
 }
 
@@ -2898,16 +3061,24 @@ function renderAdminWasteLogs() {
   el.innerHTML = logs
     .map(log => {
       const st = adminWasteLogStatusLabel(log);
-      const verifier =
-        log.status === "Completed" && log.verifiedBy ? ` · Collector ${log.verifiedBy}` : "";
+      const vName = wasteLogVerifierDisplayName(log);
+      const verifier = vName ? ` · Collector ${vName}` : "";
       const pts = log.ecoPointsAwarded ? ` · +${log.ecoPointsAwarded} pts` : "";
+      const household = householdLogPhotoMarkup(log);
+      const collection = collectorCollectionProofMarkup(log);
+      const photos =
+        log.status === "Completed"
+          ? `<div class="collector-pickup-photos collector-pickup-photos--compact admin-log-photos">${household}${collection}</div>`
+          : `<div class="collector-pickup-photos collector-pickup-photos--compact admin-log-photos">${household}<p class="bb-proof-label" style="margin:8px 0 0"><small>Awaiting collector collection photo</small></p></div>`;
       return `
-    <div class="card" style="margin-bottom:8px">
+    <div class="card admin-waste-log-card" style="margin-bottom:10px">
       <strong>${log.userName}</strong> · ${log.type} · ${log.weight} kg<br/>
       <small>Status: <strong>${st}</strong> · ${formatDateTime(log.createdAt)}${pts}${verifier}</small>
+      ${photos}
     </div>`;
     })
     .join("");
+  void hydrateAdminLogPhotoMounts();
 }
 
 function renderAdminAnalytics() {
@@ -4663,6 +4834,7 @@ window.renderNotifications = renderNotifications;
 window.initGuide = initGuide;
 window.initRewards = initRewards;
 window.handleCollectorDecision = handleCollectorDecision;
+window.handleCollectorSubmitProof = handleCollectorSubmitProof;
 window.setCollectorPickupTab = setCollectorPickupTab;
 window.beginRewardSubmission = beginRewardSubmission;
 window.cancelRewardSubmission = cancelRewardSubmission;

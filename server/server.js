@@ -317,6 +317,13 @@ async function ensureWasteLogsPhotoColumn() {
             );
             console.log('✅ waste_logs.photo_filename column added');
         }
+        const [ccols] = await pool.query(`SHOW COLUMNS FROM waste_logs LIKE 'collector_photo_filename'`);
+        if (!ccols.length) {
+            await pool.query(
+                `ALTER TABLE waste_logs ADD COLUMN collector_photo_filename VARCHAR(255) NULL DEFAULT NULL AFTER photo_filename`
+            );
+            console.log('✅ waste_logs.collector_photo_filename column added');
+        }
     } catch (err) {
         console.error('❌ ensureWasteLogsPhotoColumn:', err.message);
     }
@@ -359,9 +366,33 @@ function mapWasteLogRow(row) {
         createdAt: toIso(row.created_at),
         logDate: toIso(row.log_date),
         completedAt: toIso(row.completed_at),
-        hasPhoto: Boolean(row.photo_filename)
+        hasPhoto: Boolean(row.photo_filename),
+        hasCollectorPhoto: Boolean(row.collector_photo_filename)
     };
 }
+
+const collectorCollectionUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, wasteLogsUploadDir),
+        filename: (_req, file, cb) => {
+            const ext = path.extname(String(file.originalname || '')).toLowerCase();
+            const safeExt = ext === '.png' ? '.png' : '.jpg';
+            cb(null, `collector-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safeExt}`);
+        }
+    }),
+    limits: { fileSize: 4 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const ok = /^image\/(jpeg|png|webp)$/i.test(file.mimetype || '');
+        cb(ok ? null : new Error('Upload a JPG or PNG photo of the collected waste.'), ok);
+    }
+});
+
+const collectorCollectionUploadMw = (req, res, next) => {
+    collectorCollectionUpload.single('photo')(req, res, (err) => {
+        if (err) return res.status(400).json({ message: String(err.message || 'Upload failed') });
+        next();
+    });
+};
 
 (async () => {
     try {
@@ -631,7 +662,7 @@ app.get('/api/logs', authRequired, requireDb, async (req, res) => {
         const idCol = usersIdColumn();
         const wlSelect = `
             wl.log_id, wl.user_id, wl.user_name, wl.waste_type, wl.weight, wl.status, wl.eco_points_awarded,
-            wl.verified_by, wl.notes, wl.photo_filename, wl.log_date, wl.created_at, wl.completed_at,
+            wl.verified_by, wl.notes, wl.photo_filename, wl.collector_photo_filename, wl.log_date, wl.created_at, wl.completed_at,
             vu.full_name AS verifier_name
         `;
         const wlJoin = `FROM waste_logs wl LEFT JOIN users vu ON vu.${idCol} = wl.verified_by`;
@@ -650,6 +681,42 @@ app.get('/api/logs', authRequired, requireDb, async (req, res) => {
     } catch (err) {
         console.error('❌ GET /logs:', err.message);
         res.status(500).json({ message: err.message || 'Server error', logs: [] });
+    }
+});
+
+app.get('/api/logs/:id/collector-photo', authRequired, requireDb, async (req, res) => {
+    const logId = String(req.params.id || '');
+    const viewer = mapRoleForClient(req.user.role);
+    const uid = Number(req.user.id);
+    try {
+        const [rows] = await pool.query(
+            `SELECT log_id, user_id, verified_by, collector_photo_filename FROM waste_logs WHERE log_id = ? LIMIT 1`,
+            [logId]
+        );
+        if (!rows.length || !rows[0].collector_photo_filename) {
+            return res.status(404).json({ message: 'Collector photo not found' });
+        }
+        const row = rows[0];
+        if (viewer === 'collector' || viewer === 'admin') {
+            /* ok */
+        } else if (viewer === 'household' && Number(row.user_id) === uid) {
+            /* household may view proof for their log */
+        } else {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
+        const safeName = path.basename(String(row.collector_photo_filename));
+        const filePath = path.join(wasteLogsUploadDir, safeName);
+        if (!safeName || !fs.existsSync(filePath)) {
+            return res.status(404).json({ message: 'Photo missing on server' });
+        }
+        const ext = path.extname(safeName).toLowerCase();
+        const ctype = ext === '.png' ? 'image/png' : 'image/jpeg';
+        res.setHeader('Content-Type', ctype);
+        fs.createReadStream(filePath).pipe(res);
+    } catch (err) {
+        console.error('❌ GET collector photo:', err.message);
+        return res.status(500).json({ message: err.message || 'Server error' });
     }
 });
 
@@ -739,10 +806,77 @@ app.post('/api/logs', authRequired, requireDb, requireRoles('household'), async 
     }
 });
 
+app.post(
+    '/api/logs/:id/collection-proof',
+    authRequired,
+    requireDb,
+    requireRoles('collector'),
+    collectorCollectionUploadMw,
+    async (req, res) => {
+        const logId = String(req.params.id || '');
+        const verifierId = Number(req.user.id);
+        if (!req.file || !req.file.filename) {
+            return res.status(400).json({ message: 'Collection photo is required.' });
+        }
+        const collectorPhoto = path.basename(String(req.file.filename));
+
+        const conn = await pool.getConnection();
+        try {
+            await conn.beginTransaction();
+            const [found] = await conn.query(`SELECT * FROM waste_logs WHERE log_id = ? FOR UPDATE`, [logId]);
+            if (!found.length) {
+                await conn.rollback();
+                return res.status(404).json({ message: 'Log not found' });
+            }
+            const logRow = found[0];
+            const st = String(logRow.status || '');
+            if (st === 'Completed') {
+                await conn.rollback();
+                return res.status(400).json({ message: 'This log is already verified.' });
+            }
+
+            const pts = ecoPointsForLog(logRow.waste_type, logRow.weight);
+            const completedAt = new Date();
+
+            await conn.query(
+                `UPDATE waste_logs SET status = 'Completed', eco_points_awarded = ?, verified_by = ?, completed_at = ?, collector_photo_filename = ? WHERE log_id = ?`,
+                [pts, verifierId, completedAt, collectorPhoto, logId]
+            );
+
+            if (pts > 0) {
+                await conn.query(`UPDATE users SET eco_points = eco_points + ? WHERE ${usersIdColumn()} = ?`, [
+                    pts,
+                    logRow.user_id
+                ]);
+            }
+
+            await conn.commit();
+            const [updRows] = await pool.query(`SELECT * FROM waste_logs WHERE log_id = ?`, [logId]);
+            return res.json({
+                ok: true,
+                message: 'Collection proof sent to admin. Household EcoPoints awarded.',
+                log: mapWasteLogRow(updRows[0])
+            });
+        } catch (err) {
+            await conn.rollback();
+            console.error('❌ POST collection-proof:', err.message);
+            return res.status(500).json({ message: err.message || 'Could not submit collection proof' });
+        } finally {
+            conn.release();
+        }
+    }
+);
+
 app.patch('/api/logs/:id/verify', authRequired, requireDb, requireRoles('collector', 'admin'), async (req, res) => {
     const logId = String(req.params.id || '');
     const approve = Boolean(req.body?.approve);
     const verifierId = Number(req.user.id);
+
+    if (approve) {
+        return res.status(400).json({
+            message: 'Upload a collection photo to verify. Use Submit collection proof on the pickup card.'
+        });
+    }
 
     const conn = await pool.getConnection();
     try {
@@ -753,18 +887,14 @@ app.patch('/api/logs/:id/verify', authRequired, requireDb, requireRoles('collect
             return res.status(404).json({ message: 'Log not found' });
         }
         const logRow = found[0];
-        const pts = approve ? ecoPointsForLog(logRow.waste_type, logRow.weight) : 0;
-        const status = approve ? 'Completed' : 'Rejected';
-        const completedAt = approve ? new Date() : null;
+        const pts = 0;
+        const status = 'Rejected';
+        const completedAt = null;
 
         await conn.query(
             `UPDATE waste_logs SET status = ?, eco_points_awarded = ?, verified_by = ?, completed_at = ? WHERE log_id = ?`,
             [status, pts, verifierId, completedAt, logId]
         );
-
-        if (approve && pts > 0) {
-            await conn.query(`UPDATE users SET eco_points = eco_points + ? WHERE ${usersIdColumn()} = ?`, [pts, logRow.user_id]);
-        }
 
         await conn.commit();
         const [updRows] = await pool.query(`SELECT * FROM waste_logs WHERE log_id = ?`, [logId]);
