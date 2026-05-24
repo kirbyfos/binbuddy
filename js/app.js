@@ -412,6 +412,107 @@ function notificationsForUser(user) {
   return AppState.notifications.filter(n => n.userId != null && String(n.userId) === uid);
 }
 
+/** Chronological household activity: alerts, waste logs, and reward redemptions. */
+function householdActivityEntries(user) {
+  if (!user) return [];
+  const uid = String(user.id);
+  const entries = [];
+  notificationsForUser(user).forEach(n => {
+    entries.push({
+      kind: "notification",
+      at: new Date(n.createdAt || n.created_at),
+      text: n.text || ""
+    });
+  });
+  wasteLogsForUser(user).forEach(l => {
+    entries.push({ kind: "disposal", at: logReferenceInstant(l), log: l });
+  });
+  (AppState.redemptions || [])
+    .filter(r => String(r.userId) === uid)
+    .forEach(r => {
+      entries.push({
+        kind: "redemption",
+        at: new Date(r.createdAt),
+        rewardName: r.rewardName || r.rewardId || "Reward",
+        cost: Number(r.cost) || 0
+      });
+    });
+  return entries.filter(e => !Number.isNaN(e.at.getTime())).sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+function htmlHouseholdActivityEntry(entry) {
+  const when = escapeAdminText(formatDateTime(entry.at.toISOString()));
+  if (entry.kind === "notification") {
+    return `
+    <div class="card home-notif-card">
+      <div class="home-notif-kind">🔔 Alert</div>
+      <div class="home-notif-text">${escapeAdminText(entry.text)}</div>
+      <small>${when}</small>
+    </div>`;
+  }
+  if (entry.kind === "disposal") {
+    const l = entry.log;
+    const pts =
+      l.status === "Completed" && l.ecoPointsAwarded
+        ? ` • +${l.ecoPointsAwarded} pts`
+        : "";
+    return `
+    <div class="card home-notif-card">
+      <div class="home-notif-kind">📦 Disposal</div>
+      <div class="home-notif-text"><strong>${escapeAdminText(l.type)}</strong> — ${l.weight} kg · <strong>${escapeAdminText(l.status)}</strong>${pts}</div>
+      <small>${when}</small>
+    </div>`;
+  }
+  if (entry.kind === "redemption") {
+    return `
+    <div class="card home-notif-card">
+      <div class="home-notif-kind">🎁 Reward</div>
+      <div class="home-notif-text">Redeemed <strong>${escapeAdminText(entry.rewardName)}</strong> for ${entry.cost} EcoPoints</div>
+      <small>${when}</small>
+    </div>`;
+  }
+  return "";
+}
+
+function renderHouseholdActivityList(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const user = AuthService.currentUser();
+  const rows = householdActivityEntries(user);
+  if (!rows.length) {
+    el.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No activity yet. Waste logs, reward updates, and BinBuddy alerts will appear here.</p>`;
+    return;
+  }
+  el.innerHTML = rows.map(htmlHouseholdActivityEntry).join("");
+}
+
+const QR_REJECT_REASONS = {
+  incorrect: {
+    label: "Incorrect QR",
+    message: "The QR code is incorrect or does not match your e-money account."
+  },
+  fake: {
+    label: "Fake or edited photo",
+    message: "The QR photo appears fake, edited, or not genuine."
+  },
+  cannot_process: {
+    label: "Cannot be processed",
+    message: "We could not read or process your QR photo. Please submit a clearer image."
+  },
+  expired: {
+    label: "Invalid or expired QR",
+    message: "The QR code is expired, incomplete, or not a valid e-money QR."
+  },
+  mismatch: {
+    label: "Does not match reward",
+    message: "The QR does not match the reward amount you selected."
+  },
+  other: {
+    label: "Other issue",
+    message: "Your QR submission could not be approved. Contact your barangay admin or resubmit with a valid QR."
+  }
+};
+
 function sanitizeRegisterName(email, derived) {
   const raw = (derived || "").trim() || email.split("@")[0].replace(/[.@]+/g, " ").trim() || "User";
   return raw.slice(0, 100);
@@ -2648,43 +2749,9 @@ function renderRecentLogs() {
 }
 
 function renderNotifications() {
-  const el = document.getElementById("notif-list");
+  renderHouseholdActivityList("notif-list");
   const historyEl = document.getElementById("activity-disposal-history");
-  if (!el) return;
-  const user = AuthService.currentUser();
-  const rows = notificationsForUser(user).slice(0, 20);
-  el.innerHTML = rows
-    .map(
-      n => `
-    <div class="card">
-      ${n.text}<br/>
-      <small>${formatDateTime(n.createdAt || n.created_at)}</small>
-    </div>
-  `
-    )
-    .join("");
-
-  if (historyEl) {
-    const logs = user ? wasteLogsForUser(user) : [];
-    if (!logs.length) {
-      historyEl.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">${NO_RECENT_ACTIVITY_TEXT}</p>`;
-    } else {
-      historyEl.innerHTML = logs
-        .slice()
-        .sort((a, b) => logReferenceInstant(b).getTime() - logReferenceInstant(a).getTime())
-        .map(
-          l => `
-      <div class="card" style="margin-bottom:8px">
-        <strong>${l.type}</strong><br/>
-        ${l.weight} kg • <strong>${l.status}</strong>
-        ${l.status === "Completed" ? `• +${l.ecoPointsAwarded} pts` : ""}<br/>
-        <small>${formatDateTime(l.createdAt)}</small>
-      </div>
-    `
-        )
-        .join("");
-    }
-  }
+  if (historyEl) historyEl.innerHTML = "";
 }
 
 /** Dense ranking by EcoPoints: ties share a rank (1, 1, 2 …). */
@@ -3035,23 +3102,7 @@ function setHomeDashboardTab(tab) {
 }
 
 function renderHomeNotificationsPanel() {
-  const el = document.getElementById("home-notif-list");
-  if (!el) return;
-  const user = AuthService.currentUser();
-  const rows = notificationsForUser(user).slice(0, 12);
-  if (!rows.length) {
-    el.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No updates yet. Reward sent notices and log verifications appear here.</p>`;
-    return;
-  }
-  el.innerHTML = rows
-    .map(
-      n => `
-    <div class="card home-notif-card">
-      <div class="home-notif-text">${escapeAdminText(n.text || "")}</div>
-      <small>${escapeAdminText(formatDateTime(n.createdAt || n.created_at))}</small>
-    </div>`
-    )
-    .join("");
+  renderHouseholdActivityList("home-notif-list");
 }
 
 function renderAdminProfileScreen() {
@@ -3715,15 +3766,28 @@ function adminRewardStatusBadge(status) {
   if (s === "sent") {
     return `<span class="admin-reward-status admin-reward-status--sent">✅ Sent to household</span>`;
   }
+  if (s === "rejected") {
+    return `<span class="admin-reward-status admin-reward-status--rejected">❌ QR rejected</span>`;
+  }
   return `<span class="admin-reward-status admin-reward-status--pending">⏳ Pending fulfillment</span>`;
 }
 
 function htmlAdminRewardRequestCard(r) {
   const id = escapeAdminText(r.id);
-  const sent = String(r.status || "pending").toLowerCase() === "sent";
+  const status = String(r.status || "pending").toLowerCase();
+  const sent = status === "sent";
+  const rejected = status === "rejected";
+  const pending = !sent && !rejected;
   const sentBtn = sent
     ? `<button type="button" class="btn btn-outline" disabled title="Household already notified">✅ Sent</button>`
-    : `<button type="button" class="btn btn-primary" data-rdm-sent="${id}">📤 Mark as sent</button>`;
+    : pending
+      ? `<button type="button" class="btn btn-primary" data-rdm-sent="${id}">📤 Mark as sent</button>`
+      : "";
+  const rejectBtn = pending
+    ? `<button type="button" class="btn btn-outline admin-reward-reject-btn" data-rdm-reject="${id}">❌ Reject QR</button>`
+    : rejected
+      ? `<button type="button" class="btn btn-outline" disabled>Rejected</button>`
+      : "";
   const dlBtn = apiMode && getToken()
     ? `<button type="button" class="btn btn-outline" data-rdm-dl="${id}">⬇️ Download QR photo</button>`
     : r.qrDataUrl
@@ -3740,10 +3804,96 @@ function htmlAdminRewardRequestCard(r) {
         </div>
         <div class="admin-reward-request-actions">
           ${dlBtn}
+          ${rejectBtn}
           ${sentBtn}
         </div>
       </div>
     </div>`;
+}
+
+let adminQrRejectTargetId = null;
+
+function openAdminQrRejectModal(redemptionId) {
+  adminQrRejectTargetId = redemptionId;
+  const sel = document.getElementById("admin-qr-reject-reason");
+  if (sel) sel.value = "incorrect";
+  document.getElementById("admin-qr-reject-modal")?.classList.add("active");
+}
+
+function closeAdminQrRejectModal() {
+  adminQrRejectTargetId = null;
+  closeModal("admin-qr-reject-modal");
+}
+
+function populateAdminQrRejectReasonSelect() {
+  const sel = document.getElementById("admin-qr-reject-reason");
+  if (!sel || sel.options.length) return;
+  Object.entries(QR_REJECT_REASONS).forEach(([key, meta]) => {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = meta.label;
+    sel.appendChild(opt);
+  });
+}
+
+async function confirmAdminQrReject() {
+  const id = adminQrRejectTargetId;
+  const sel = document.getElementById("admin-qr-reject-reason");
+  const reasonKey = sel?.value || "other";
+  if (!id) return;
+  closeAdminQrRejectModal();
+  await rejectAdminRewardRedemption(id, reasonKey);
+}
+
+async function rejectAdminRewardRedemption(id, reasonKey) {
+  if (!id) return;
+  const user = AuthService.currentUser();
+  if (!user || normalizeRole(user.role) !== "admin") {
+    showToast("Admin access only.");
+    return;
+  }
+  const reason = QR_REJECT_REASONS[reasonKey] || QR_REJECT_REASONS.other;
+  if (apiMode && getToken()) {
+    try {
+      const data = await apiFetch(`/admin/reward-redemptions/${encodeURIComponent(id)}/reject`, {
+        method: "PATCH",
+        body: JSON.stringify({ reason: reasonKey })
+      });
+      showToast(data.message || "Household notified that their QR was rejected.");
+      await renderAdminRewardQueue();
+      return;
+    } catch (e) {
+      showToast(e.message || "Could not reject QR.");
+      return;
+    }
+  }
+  const row = (AppState.rewardQrSubmissions || []).find(x => String(x.id) === String(id));
+  if (!row) {
+    showToast("Request not found.");
+    return;
+  }
+  const status = String(row.status || "").toLowerCase();
+  if (status === "sent") {
+    showToast("This reward was already sent.");
+    return;
+  }
+  if (status === "rejected") {
+    showToast("This QR was already rejected.");
+    return;
+  }
+  row.status = "rejected";
+  const household = AppState.users.find(u => sameUserId(u.id, row.userId));
+  if (household) household.ecoPoints += Number(row.cost) || 0;
+  const display = row.rewardDisplay || "your reward";
+  AppState.notifications.unshift({
+    text: `Your e-money reward request (${display}) was rejected: ${reason.message} Your EcoPoints have been refunded.`,
+    createdAt: nowIso(),
+    userId: row.userId,
+    redemptionId: row.id
+  });
+  persistState();
+  showToast("Household notified and EcoPoints refunded (offline demo).");
+  await renderAdminRewardQueue();
 }
 
 async function markAdminRewardRedemptionSent(id) {
@@ -3802,7 +3952,7 @@ async function renderAdminRewardQueue() {
       const rows = data.requests || [];
       wrap.innerHTML =
         `<div class="section-title" style="margin-top:0">🎁 Reward requests (e-money QR)</div>` +
-        '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the household QR photo, fulfill the reward, then tap <strong>Mark as sent</strong> to notify them.</p>' +
+        '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the QR photo, fulfill the reward and tap <strong>Mark as sent</strong>, or <strong>Reject QR</strong> if the code is incorrect, fake, or cannot be processed — the household is notified and EcoPoints are refunded.</p>' +
         (rows.length
           ? rows.map(r => htmlAdminRewardRequestCard(r)).join("")
           : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No reward requests yet.</p>`);
@@ -3810,6 +3960,11 @@ async function renderAdminRewardQueue() {
         const dl = e.target.closest("[data-rdm-dl]");
         if (dl) {
           void downloadAdminRewardRedemptionPhoto(dl.getAttribute("data-rdm-dl"));
+          return;
+        }
+        const reject = e.target.closest("[data-rdm-reject]");
+        if (reject) {
+          openAdminQrRejectModal(reject.getAttribute("data-rdm-reject"));
           return;
         }
         const sent = e.target.closest("[data-rdm-sent]");
@@ -3824,11 +3979,16 @@ async function renderAdminRewardQueue() {
   const rows = AppState.rewardQrSubmissions || [];
   wrap.innerHTML =
     `<div class="section-title" style="margin-top:16px">🎁 Reward requests (QR · offline demo)</div>` +
-    '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the QR, fulfill the reward, then tap <strong>Mark as sent</strong> to notify the household.</p>' +
+    '<p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px">Download the QR, mark as sent, or reject with a reason — the household is notified and points refunded on reject.</p>' +
     (rows.length
       ? rows.map(r => htmlAdminRewardRequestCard(r)).join("")
       : `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No reward requests yet.</p>`);
   wrap.onclick = e => {
+    const reject = e.target.closest("[data-rdm-reject]");
+    if (reject) {
+      openAdminQrRejectModal(reject.getAttribute("data-rdm-reject"));
+      return;
+    }
     const sent = e.target.closest("[data-rdm-sent]");
     if (sent) void markAdminRewardRedemptionSent(sent.getAttribute("data-rdm-sent"));
   };
@@ -4858,6 +5018,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   };
 
   safeInit("loadState", () => loadState());
+  safeInit("adminQrRejectModal", () => populateAdminQrRejectReasonSelect());
   safeInit("loadSession", () => loadSession());
   safeInit("historyGuard", () => HistoryGuard.init());
 
@@ -4918,6 +5079,8 @@ window.decreaseQty = decreaseQty;
 window.renderLeaderboard = renderLeaderboard;
 window.goToRewardsLeaderboard = goToRewardsLeaderboard;
 window.renderNotifications = renderNotifications;
+window.confirmAdminQrReject = confirmAdminQrReject;
+window.closeAdminQrRejectModal = closeAdminQrRejectModal;
 window.initGuide = initGuide;
 window.initRewards = initRewards;
 window.handleCollectorDecision = handleCollectorDecision;

@@ -292,7 +292,7 @@
       </div><!-- /home-panel-overview -->
 
       <div id="home-panel-notifications" hidden>
-        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Updates when collectors verify your logs, admins send rewards, and other BinBuddy alerts.</p>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">Your full activity log — waste disposals, reward updates, and BinBuddy alerts.</p>
         <div id="home-notif-list"></div>
         <button type="button" class="btn btn-ghost" style="margin-top:12px;width:100%" onclick="goTo('notifications');renderNotifications()">Open full activity log →</button>
       </div>
@@ -739,11 +739,9 @@
       <h1>Activity Log</h1>
     </div>
     <div class="page-content">
+      <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 12px;line-height:1.45">All alerts, waste logs, and reward activity in one timeline.</p>
       <div id="notif-list"></div>
-      <div class="section-title" style="margin-top:14px">📦 Disposal History</div>
-      <div class="card">
-        <div id="activity-disposal-history"></div>
-      </div>
+      <div id="activity-disposal-history" hidden aria-hidden="true"></div>
     </div>
   </section>
 
@@ -978,6 +976,19 @@
   <!-- ====================================================
        CONFETTI OVERLAY
   ==================================================== -->
+  <div class="modal-overlay" id="admin-qr-reject-modal" role="dialog" aria-modal="true" aria-labelledby="admin-qr-reject-title">
+    <div class="modal" style="max-width:420px">
+      <h2 id="admin-qr-reject-title" style="margin:0 0 8px;font-size:1.15rem">Reject QR photo</h2>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin:0 0 14px;line-height:1.45">The household will be notified with this reason. Their EcoPoints for this request will be refunded.</p>
+      <label for="admin-qr-reject-reason" style="display:block;font-size:0.88rem;font-weight:700;margin-bottom:6px">Reason</label>
+      <select id="admin-qr-reject-reason" class="form-input" style="width:100%;margin-bottom:16px;padding:10px 12px"></select>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button type="button" class="btn btn-primary" style="flex:1" onclick="confirmAdminQrReject()">Reject &amp; notify</button>
+        <button type="button" class="btn btn-ghost" style="flex:1" onclick="closeAdminQrRejectModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="confetti-overlay" id="confetti-overlay"></div>
 
   <!-- Toast Notification -->

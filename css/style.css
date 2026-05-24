@@ -1696,10 +1696,26 @@ a { text-decoration: none; color: inherit; }
   background: rgba(46, 139, 87, 0.15);
   color: var(--primary-dark);
 }
+.admin-reward-status--rejected {
+  background: rgba(231, 76, 60, 0.12);
+  color: #c0392b;
+}
+.admin-reward-reject-btn {
+  border-color: rgba(231, 76, 60, 0.45);
+  color: #c0392b;
+}
 
 /* ---- Home dashboard notifications tab ---- */
 .home-notif-card {
   margin-bottom: 8px;
+}
+.home-notif-kind {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
 }
 .home-notif-text {
   font-size: 0.9rem;

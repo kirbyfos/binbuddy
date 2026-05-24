@@ -1035,6 +1035,13 @@ app.post(
                 });
             }
 
+            transient.notifications.unshift({
+                userId: String(urow.id),
+                text: `Reward request submitted: ${reward.display} (${reward.cost} EcoPoints). Waiting for admin review.`,
+                createdAt: new Date().toISOString(),
+                redemptionId
+            });
+
             return res.json({
                 ok: true,
                 reward: { id: reward.id, display: reward.display, cost: reward.cost },
@@ -1081,6 +1088,93 @@ app.get('/api/admin/reward-redemptions', authRequired, requireDb, requireRoles('
         res.json({ requests });
     } catch (_e) {
         res.status(500).json({ requests: [], message: 'Could not load redemptions.' });
+    }
+});
+
+const QR_REJECT_REASON_MESSAGES = {
+    incorrect: 'The QR code is incorrect or does not match your e-money account.',
+    fake: 'The QR photo appears fake, edited, or not genuine.',
+    cannot_process: 'We could not read or process your QR photo. Please submit a clearer image.',
+    expired: 'The QR code is expired, incomplete, or not a valid e-money QR.',
+    mismatch: 'The QR does not match the reward amount you selected.',
+    other: 'Your QR submission could not be approved. Contact your barangay admin or resubmit with a valid QR.'
+};
+
+app.patch('/api/admin/reward-redemptions/:id/reject', authRequired, requireDb, requireRoles('admin'), async (req, res) => {
+    try {
+        const rid = String(req.params.id || '').trim();
+        if (!rid) return res.status(400).json({ message: 'Redemption id required.' });
+
+        const reasonKey = String(req.body?.reason || 'other').trim().toLowerCase();
+        const reasonText = QR_REJECT_REASON_MESSAGES[reasonKey] || QR_REJECT_REASON_MESSAGES.other;
+
+        const [[row]] = await pool.query(
+            `SELECT redemption_id, user_id, user_name, reward_display, cost_points, status
+             FROM reward_redemptions WHERE redemption_id = ? LIMIT 1`,
+            [rid]
+        );
+        if (!row) return res.status(404).json({ message: 'Redemption not found.' });
+
+        const status = String(row.status || '').toLowerCase();
+        if (status === 'sent') {
+            return res.status(400).json({ message: 'This reward was already sent and cannot be rejected.' });
+        }
+
+        const display = String(row.reward_display || 'your reward').trim();
+        const uid = row.user_id;
+        const cost = Number(row.cost_points || 0);
+        const alreadyRejected = status === 'rejected';
+
+        if (!alreadyRejected) {
+            if (!usersColumnInfo.loaded) await readUsersColumns();
+            const idCol = usersIdColumn();
+            const conn = await pool.getConnection();
+            try {
+                await conn.beginTransaction();
+                await conn.query(`UPDATE reward_redemptions SET status = 'rejected' WHERE redemption_id = ?`, [rid]);
+                if (cost > 0) {
+                    await conn.query(`UPDATE users SET eco_points = eco_points + ? WHERE ${idCol} = ?`, [cost, uid]);
+                }
+                await conn.commit();
+            } catch (txErr) {
+                await conn.rollback();
+                throw txErr;
+            } finally {
+                conn.release();
+            }
+        }
+
+        const msg = `Your e-money reward request (${display}) was rejected: ${reasonText} Your EcoPoints have been refunded.`;
+        const exists = transient.notifications.some(
+            (n) => String(n.userId) === String(uid) && String(n.redemptionId || '') === `${rid}:reject`
+        );
+        if (!exists) {
+            transient.notifications.unshift({
+                userId: String(uid),
+                text: msg,
+                createdAt: new Date().toISOString(),
+                redemptionId: `${rid}:reject`
+            });
+        }
+
+        return res.json({
+            ok: true,
+            alreadyRejected,
+            message: alreadyRejected
+                ? 'Household was already notified of this rejection.'
+                : 'QR rejected. Household notified and EcoPoints refunded.',
+            request: {
+                id: rid,
+                userId: uid,
+                userName: row.user_name,
+                rewardDisplay: display,
+                cost,
+                status: 'rejected'
+            }
+        });
+    } catch (err) {
+        console.error('❌ PATCH reward reject:', err?.message || err);
+        return res.status(500).json({ message: err?.message || 'Could not reject QR.' });
     }
 });
 
