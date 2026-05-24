@@ -412,6 +412,26 @@ function notificationsForUser(user) {
   return AppState.notifications.filter(n => n.userId != null && String(n.userId) === uid);
 }
 
+/** Map stored notification → activity feed category (not generic Alert for e-wallet rewards). */
+function notificationActivityKind(n) {
+  const t = String(n.type || "").toLowerCase();
+  if (t === "reward_sent") return "reward_sent";
+  if (t === "reward_rejected") return "reward_rejected";
+  if (t === "reward_submitted") return "reward_submitted";
+  const text = String(n.text || "").toLowerCase();
+  if (text.includes("sent to your e-wallet") || (text.includes("e-wallet") && text.includes("sent"))) {
+    return "reward_sent";
+  }
+  if (text.includes("was rejected") || text.includes("rejected:")) return "reward_rejected";
+  if (text.includes("request submitted") || text.includes("waiting for admin")) return "reward_submitted";
+  return "alert";
+}
+
+function rewardSentNotificationText(display) {
+  const label = String(display || "Your e-money reward").trim();
+  return `${label} has been sent to your e-wallet. Check GCash, PayMaya, or your bank app to confirm receipt.`;
+}
+
 /** Chronological household activity: alerts, waste logs, and reward redemptions. */
 function householdActivityEntries(user) {
   if (!user) return [];
@@ -419,7 +439,7 @@ function householdActivityEntries(user) {
   const entries = [];
   notificationsForUser(user).forEach(n => {
     entries.push({
-      kind: "notification",
+      kind: notificationActivityKind(n),
       at: new Date(n.createdAt || n.created_at),
       text: n.text || ""
     });
@@ -442,7 +462,31 @@ function householdActivityEntries(user) {
 
 function htmlHouseholdActivityEntry(entry) {
   const when = escapeAdminText(formatDateTime(entry.at.toISOString()));
-  if (entry.kind === "notification") {
+  if (entry.kind === "reward_sent") {
+    return `
+    <div class="card home-notif-card home-notif-card--ewallet-sent">
+      <div class="home-notif-kind">💳 Sent to e-wallet</div>
+      <div class="home-notif-text">${escapeAdminText(entry.text)}</div>
+      <small>${when}</small>
+    </div>`;
+  }
+  if (entry.kind === "reward_rejected") {
+    return `
+    <div class="card home-notif-card home-notif-card--ewallet-rejected">
+      <div class="home-notif-kind">💳 E-wallet update</div>
+      <div class="home-notif-text">${escapeAdminText(entry.text)}</div>
+      <small>${when}</small>
+    </div>`;
+  }
+  if (entry.kind === "reward_submitted") {
+    return `
+    <div class="card home-notif-card">
+      <div class="home-notif-kind">🎁 Reward request</div>
+      <div class="home-notif-text">${escapeAdminText(entry.text)}</div>
+      <small>${when}</small>
+    </div>`;
+  }
+  if (entry.kind === "alert") {
     return `
     <div class="card home-notif-card">
       <div class="home-notif-kind">🔔 Alert</div>
@@ -480,7 +524,7 @@ function renderHouseholdActivityList(containerId) {
   const user = AuthService.currentUser();
   const rows = householdActivityEntries(user);
   if (!rows.length) {
-    el.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No activity yet. Waste logs, reward updates, and BinBuddy alerts will appear here.</p>`;
+    el.innerHTML = `<p style="font-size:0.88rem;color:var(--text-muted);margin:0">No activity yet. Waste logs, e-wallet reward updates, and other BinBuddy notices will appear here.</p>`;
     return;
   }
   el.innerHTML = rows.map(htmlHouseholdActivityEntry).join("");
@@ -1371,7 +1415,8 @@ async function syncFromServer(options = {}) {
       (nd.notifications || []).map(n => ({
         text: n.text,
         createdAt: n.createdAt || n.created_at,
-        userId: user.id
+        userId: user.id,
+        type: n.type || null
       }));
 
     if (role === "household") {
@@ -3889,7 +3934,8 @@ async function rejectAdminRewardRedemption(id, reasonKey) {
     text: `Your e-money reward request (${display}) was rejected: ${reason.message} Your EcoPoints have been refunded.`,
     createdAt: nowIso(),
     userId: row.userId,
-    redemptionId: row.id
+    redemptionId: row.id,
+    type: "reward_rejected"
   });
   persistState();
   showToast("Household notified and EcoPoints refunded (offline demo).");
@@ -3926,11 +3972,13 @@ async function markAdminRewardRedemptionSent(id) {
     return;
   }
   row.status = "sent";
-  const display = row.rewardDisplay || "your reward";
+  const display = row.rewardDisplay || "Your e-money reward";
   AppState.notifications.unshift({
-    text: `Your e-money reward (${display}) has been sent by your barangay admin. Please check your e-money account.`,
+    text: rewardSentNotificationText(display),
     createdAt: nowIso(),
-    userId: row.userId
+    userId: row.userId,
+    type: "reward_sent",
+    redemptionId: row.id
   });
   persistState();
   showToast("Household notified (offline demo).");

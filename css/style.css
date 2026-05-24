@@ -1722,6 +1722,16 @@ a { text-decoration: none; color: inherit; }
   line-height: 1.45;
   margin-bottom: 4px;
 }
+.home-notif-card--ewallet-sent {
+  border-left: 3px solid var(--primary);
+  background: linear-gradient(90deg, rgba(232, 247, 236, 0.65), transparent);
+}
+.home-notif-card--ewallet-sent .home-notif-kind {
+  color: var(--primary-dark);
+}
+.home-notif-card--ewallet-rejected {
+  border-left: 3px solid #e74c3c;
+}
 .admin-dash-tabs,
 .home-dash-tabs {
   margin-top: 4px;

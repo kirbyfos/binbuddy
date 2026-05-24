@@ -1039,7 +1039,8 @@ app.post(
                 userId: String(urow.id),
                 text: `Reward request submitted: ${reward.display} (${reward.cost} EcoPoints). Waiting for admin review.`,
                 createdAt: new Date().toISOString(),
-                redemptionId
+                redemptionId,
+                type: 'reward_submitted'
             });
 
             return res.json({
@@ -1153,7 +1154,8 @@ app.patch('/api/admin/reward-redemptions/:id/reject', authRequired, requireDb, r
                 userId: String(uid),
                 text: msg,
                 createdAt: new Date().toISOString(),
-                redemptionId: `${rid}:reject`
+                redemptionId: `${rid}:reject`,
+                type: 'reward_rejected'
             });
         }
 
@@ -1198,7 +1200,7 @@ app.patch('/api/admin/reward-redemptions/:id/sent', authRequired, requireDb, req
             await pool.query(`UPDATE reward_redemptions SET status = 'sent' WHERE redemption_id = ?`, [rid]);
         }
 
-        const msg = `Your e-money reward (${display}) has been sent by your barangay admin. Please check your e-money account.`;
+        const msg = `${display} has been sent to your e-wallet. Check GCash, PayMaya, or your bank app to confirm receipt.`;
         const exists = transient.notifications.some(
             (n) => String(n.userId) === String(uid) && String(n.redemptionId || '') === rid
         );
@@ -1207,7 +1209,8 @@ app.patch('/api/admin/reward-redemptions/:id/sent', authRequired, requireDb, req
                 userId: String(uid),
                 text: msg,
                 createdAt: new Date().toISOString(),
-                redemptionId: rid
+                redemptionId: rid,
+                type: 'reward_sent'
             });
         }
 
