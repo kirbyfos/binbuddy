@@ -327,12 +327,21 @@
         <!-- Quantity -->
         <div class="section-title">⚖️ Quantity</div>
         <div class="qty-selector mb-16">
-          <button class="qty-btn" id="qty-minus">−</button>
+          <button class="qty-btn" id="qty-minus" type="button">−</button>
           <div class="flex-center" style="flex:1;flex-direction:column">
-            <div class="qty-display" id="qty-display">1.0</div>
+            <input
+              class="qty-display qty-input"
+              id="qty-display"
+              type="number"
+              inputmode="decimal"
+              min="0.1"
+              step="0.1"
+              value="1.0"
+              aria-label="Total disposal weight in kilograms"
+            />
             <div class="qty-unit">kilograms (kg)</div>
           </div>
-          <button class="qty-btn" id="qty-plus">+</button>
+          <button class="qty-btn" id="qty-plus" type="button">+</button>
         </div>
         <div class="form-group">
           <label for="manual-log-date">Date</label>
@@ -913,12 +922,21 @@
         <div class="waste-chip spc" data-type="spc" onclick="selectModalType('spc',this)">⚠️ Spc</div>
       </div>
       <div class="qty-selector mb-16">
-        <button class="qty-btn" onclick="AppState.logQty=Math.max(0.1,Math.round((AppState.logQty-0.1)*10)/10);document.getElementById('modal-qty').textContent=AppState.logQty.toFixed(1)">−</button>
+        <button class="qty-btn" type="button" onclick="decreaseQty()">−</button>
         <div class="flex-center" style="flex:1;flex-direction:column">
-          <div class="qty-display" id="modal-qty">1.0</div>
+          <input
+            class="qty-display qty-input"
+            id="modal-qty"
+            type="number"
+            inputmode="decimal"
+            min="0.1"
+            step="0.1"
+            value="1.0"
+            aria-label="Total disposal weight in kilograms"
+          />
           <div class="qty-unit">kg</div>
         </div>
-        <button class="qty-btn" onclick="AppState.logQty=Math.round((AppState.logQty+0.1)*10)/10;document.getElementById('modal-qty').textContent=AppState.logQty.toFixed(1)">+</button>
+        <button class="qty-btn" type="button" onclick="increaseQty()">+</button>
       </div>
       <div class="form-group">
         <label for="modal-log-date">Date</label>

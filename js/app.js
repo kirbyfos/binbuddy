@@ -2637,6 +2637,7 @@ function openLogModal() {
   if (modalDate && !modalDate.value) {
     modalDate.value = todayInputValue();
   }
+  updateQtyUI();
   document.getElementById("log-modal").classList.add("active");
 }
 
@@ -2646,10 +2647,39 @@ function closeModal(id) {
 }
 
 function updateQtyUI() {
+  const displayValue = Number.isFinite(AppState.logQty) ? AppState.logQty.toFixed(1) : "";
   const qty = document.getElementById("qty-display");
-  if (qty) qty.textContent = AppState.logQty.toFixed(1);
+  if (qty) qty.value = displayValue;
   const modalQty = document.getElementById("modal-qty");
-  if (modalQty) modalQty.textContent = AppState.logQty.toFixed(1);
+  if (modalQty) modalQty.value = displayValue;
+}
+
+function parseWeightInputValue(value) {
+  const n = Number.parseFloat(String(value || "").replace(",", "."));
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+}
+
+function syncQtyFromInput(input, { format = false } = {}) {
+  if (!input) return NaN;
+  const parsed = parseWeightInputValue(input.value);
+  if (!Number.isFinite(parsed)) return NaN;
+  AppState.logQty = Math.max(0.1, parsed);
+  if (format) updateQtyUI();
+  return AppState.logQty;
+}
+
+function initWeightInputs() {
+  ["qty-display", "modal-qty"].forEach(id => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener("input", () => {
+      syncQtyFromInput(input);
+    });
+    input.addEventListener("blur", () => {
+      const synced = syncQtyFromInput(input, { format: true });
+      if (!Number.isFinite(synced)) updateQtyUI();
+    });
+  });
 }
 
 function setupWasteTypeSelectors() {
@@ -2690,8 +2720,11 @@ function decreaseQty() {
 }
 
 function getManualInputWeight() {
-  const qtyDisplay = document.getElementById("qty-display");
-  const parsedQty = qtyDisplay ? Number.parseFloat(qtyDisplay.textContent) : AppState.logQty;
+  const modal = document.getElementById("log-modal");
+  const modalInput = document.getElementById("modal-qty");
+  const manualInput = document.getElementById("qty-display");
+  const source = modal?.classList.contains("active") ? modalInput : manualInput;
+  const parsedQty = source ? syncQtyFromInput(source, { format: true }) : AppState.logQty;
   return Number.isFinite(parsedQty) ? parsedQty : NaN;
 }
 
@@ -2739,6 +2772,8 @@ function resetLogInputs() {
   if (modalDate) modalDate.value = todayInputValue();
   if (manualPhoto) manualPhoto.value = "";
   if (modalPhoto) modalPhoto.value = "";
+  AppState.logQty = 1;
+  updateQtyUI();
   updatePhotoLabel("");
 }
 
@@ -2754,7 +2789,7 @@ async function submitLog() {
     showToast("Only household users can submit logs.");
     return;
   }
-  const weight = Number.isFinite(AppState.logQty) ? AppState.logQty : getManualInputWeight();
+  const weight = getManualInputWeight();
   const error = WasteLogService.validate(weight, AppState.logType, user);
   if (error) {
     showToast(error);
@@ -4969,6 +5004,7 @@ function initNavigation() {
   const minus = document.getElementById("qty-minus");
   if (plus) plus.addEventListener("click", increaseQty);
   if (minus) minus.addEventListener("click", decreaseQty);
+  initWeightInputs();
 
   document.querySelectorAll("#manual-panel .waste-chip").forEach(chip => {
     chip.addEventListener("click", () => {

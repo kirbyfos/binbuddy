@@ -2143,6 +2143,19 @@ a { text-decoration: none; color: inherit; }
   flex: 1;
   text-align: center;
 }
+.qty-input {
+  width: 100%;
+  max-width: 140px;
+  border: 1px solid rgba(46, 139, 87, 0.22);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text-main);
+  padding: 8px 10px;
+}
+.qty-input:focus {
+  border-color: var(--primary);
+  outline: 2px solid rgba(46, 139, 87, 0.16);
+}
 .qty-unit { font-size: 0.8rem; color: var(--text-muted); }
 
 /* ---- About Screen ---- */
