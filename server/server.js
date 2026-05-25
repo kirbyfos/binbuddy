@@ -1092,6 +1092,37 @@ app.get('/api/admin/reward-redemptions', authRequired, requireDb, requireRoles('
     }
 });
 
+const REWARD_DISPLAY_BY_ID = {
+    'RWD-EMONEY-50': '₱50 E-Money',
+    'RWD-EMONEY-75': '₱75 E-Money',
+    'RWD-EMONEY-100': '₱100 E-Money'
+};
+
+const REWARD_DISPLAY_BY_COST = {
+    500: '₱50 E-Money',
+    750: '₱75 E-Money',
+    1000: '₱100 E-Money'
+};
+
+function resolveRewardDisplayLabel(display, rewardId, costPoints) {
+    const d = String(display || '').trim();
+    if (/₱\d+/i.test(d) && /e-money/i.test(d)) return d;
+    const id = String(rewardId || '').trim();
+    if (REWARD_DISPLAY_BY_ID[id]) return REWARD_DISPLAY_BY_ID[id];
+    const cost = Number(costPoints);
+    if (REWARD_DISPLAY_BY_COST[cost]) return REWARD_DISPLAY_BY_COST[cost];
+    const hit = transient.rewards.find((r) => r.id === id);
+    if (hit?.display) return hit.display;
+    const fromText = String(display || '').match(/₱\d+\s*E-Money/i);
+    if (fromText) return fromText[0];
+    return d;
+}
+
+function rewardSentNotificationText(display, rewardId, costPoints) {
+    const label = resolveRewardDisplayLabel(display, rewardId, costPoints);
+    return `${label} has been sent to your e-wallet. Check GCash, PayMaya, or your bank app to confirm receipt.`;
+}
+
 const QR_REJECT_REASON_MESSAGES = {
     incorrect: 'The QR code is incorrect or does not match your e-money account.',
     fake: 'The QR photo appears fake, edited, or not genuine.',
@@ -1186,13 +1217,13 @@ app.patch('/api/admin/reward-redemptions/:id/sent', authRequired, requireDb, req
         if (!rid) return res.status(400).json({ message: 'Redemption id required.' });
 
         const [[row]] = await pool.query(
-            `SELECT redemption_id, user_id, user_name, reward_display, cost_points, status
+            `SELECT redemption_id, user_id, user_name, reward_id, reward_display, cost_points, status
              FROM reward_redemptions WHERE redemption_id = ? LIMIT 1`,
             [rid]
         );
         if (!row) return res.status(404).json({ message: 'Redemption not found.' });
 
-        const display = String(row.reward_display || 'your reward').trim();
+        const display = resolveRewardDisplayLabel(row.reward_display, row.reward_id, row.cost_points);
         const uid = row.user_id;
         const alreadySent = String(row.status || '').toLowerCase() === 'sent';
 
@@ -1200,18 +1231,28 @@ app.patch('/api/admin/reward-redemptions/:id/sent', authRequired, requireDb, req
             await pool.query(`UPDATE reward_redemptions SET status = 'sent' WHERE redemption_id = ?`, [rid]);
         }
 
-        const msg = `${display} has been sent to your e-wallet. Check GCash, PayMaya, or your bank app to confirm receipt.`;
-        const exists = transient.notifications.some(
+        const msg = rewardSentNotificationText(row.reward_display, row.reward_id, row.cost_points);
+        const existingIdx = transient.notifications.findIndex(
             (n) => String(n.userId) === String(uid) && String(n.redemptionId || '') === rid
         );
-        if (!exists) {
+        if (existingIdx === -1) {
             transient.notifications.unshift({
                 userId: String(uid),
                 text: msg,
                 createdAt: new Date().toISOString(),
                 redemptionId: rid,
-                type: 'reward_sent'
+                type: 'reward_sent',
+                rewardDisplay: display,
+                rewardId: row.reward_id,
+                costPoints: Number(row.cost_points || 0)
             });
+        } else {
+            const n = transient.notifications[existingIdx];
+            n.text = msg;
+            n.type = 'reward_sent';
+            n.rewardDisplay = display;
+            n.rewardId = row.reward_id;
+            n.costPoints = Number(row.cost_points || 0);
         }
 
         return res.json({

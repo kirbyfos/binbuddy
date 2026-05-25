@@ -427,9 +427,52 @@ function notificationActivityKind(n) {
   return "alert";
 }
 
-function rewardSentNotificationText(display) {
-  const label = String(display || "Your e-money reward").trim();
+const REWARD_DISPLAY_BY_ID = {
+  "RWD-EMONEY-50": "₱50 E-Money",
+  "RWD-EMONEY-75": "₱75 E-Money",
+  "RWD-EMONEY-100": "₱100 E-Money"
+};
+
+const REWARD_DISPLAY_BY_COST = {
+  500: "₱50 E-Money",
+  750: "₱75 E-Money",
+  1000: "₱100 E-Money"
+};
+
+function extractRewardLabelFromNotification(text) {
+  const m = String(text || "").match(/₱\d+\s*E-Money/i);
+  return m ? m[0].trim() : "";
+}
+
+function resolveRewardDisplayLabel(display, rewardId, costPoints) {
+  const fromText = extractRewardLabelFromNotification(display);
+  if (fromText) return fromText;
+  const d = String(display || "").trim();
+  if (/₱\d+/i.test(d) && /e-money/i.test(d)) return d;
+  const id = String(rewardId || "").trim();
+  if (REWARD_DISPLAY_BY_ID[id]) return REWARD_DISPLAY_BY_ID[id];
+  const cost = Number(costPoints);
+  if (REWARD_DISPLAY_BY_COST[cost]) return REWARD_DISPLAY_BY_COST[cost];
+  try {
+    const hit = RewardsService.catalog().find(r => r.id === id);
+    if (hit?.display) return hit.display;
+  } catch (_e) {
+    /* RewardsService may not be initialized yet */
+  }
+  return d || extractRewardLabelFromNotification(String(display || ""));
+}
+
+function rewardSentNotificationText(display, rewardId, costPoints) {
+  const label = resolveRewardDisplayLabel(display, rewardId, costPoints) || "Your e-money reward";
   return `${label} has been sent to your e-wallet. Check GCash, PayMaya, or your bank app to confirm receipt.`;
+}
+
+function householdNotificationDisplayText(n) {
+  const kind = notificationActivityKind(n);
+  if (kind === "reward_sent") {
+    return rewardSentNotificationText(n.rewardDisplay, n.rewardId, n.costPoints ?? n.cost);
+  }
+  return n.text || "";
 }
 
 /** Chronological household activity: alerts, waste logs, and reward redemptions. */
@@ -441,7 +484,7 @@ function householdActivityEntries(user) {
     entries.push({
       kind: notificationActivityKind(n),
       at: new Date(n.createdAt || n.created_at),
-      text: n.text || ""
+      text: householdNotificationDisplayText(n)
     });
   });
   wasteLogsForUser(user).forEach(l => {
@@ -1412,12 +1455,22 @@ async function syncFromServer(options = {}) {
     const role = normalizeRole(user.role);
 
     const mapNotifications = nd =>
-      (nd.notifications || []).map(n => ({
-        text: n.text,
-        createdAt: n.createdAt || n.created_at,
-        userId: user.id,
-        type: n.type || null
-      }));
+      (nd.notifications || []).map(n => {
+        const row = {
+          text: n.text,
+          createdAt: n.createdAt || n.created_at,
+          userId: user.id,
+          type: n.type || null,
+          rewardDisplay: n.rewardDisplay || null,
+          rewardId: n.rewardId || null,
+          costPoints: n.costPoints != null ? n.costPoints : n.cost != null ? n.cost : null
+        };
+        if (notificationActivityKind(row) === "reward_sent") {
+          row.text = rewardSentNotificationText(row.rewardDisplay, row.rewardId, row.costPoints);
+          row.type = "reward_sent";
+        }
+        return row;
+      });
 
     if (role === "household") {
       const [logsData, notifData, lb] = await Promise.all([
@@ -3972,13 +4025,16 @@ async function markAdminRewardRedemptionSent(id) {
     return;
   }
   row.status = "sent";
-  const display = row.rewardDisplay || "Your e-money reward";
+  const display = row.rewardDisplay || "";
   AppState.notifications.unshift({
-    text: rewardSentNotificationText(display),
+    text: rewardSentNotificationText(display, row.rewardId, row.cost),
     createdAt: nowIso(),
     userId: row.userId,
     type: "reward_sent",
-    redemptionId: row.id
+    redemptionId: row.id,
+    rewardDisplay: display,
+    rewardId: row.rewardId || null,
+    costPoints: row.cost
   });
   persistState();
   showToast("Household notified (offline demo).");
